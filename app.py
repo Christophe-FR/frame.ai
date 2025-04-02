@@ -72,12 +72,7 @@ def extract_frames(video_path, start_frame=0, num_frames=9):
             
         # Convert BGR to RGB
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        # Resize frame to smaller size for display
-        height, width = frame_rgb.shape[:2]
-        new_width = 300
-        new_height = int(height * (new_width / width))
-        frame_resized = cv2.resize(frame_rgb, (new_width, new_height))
-        frames.append(frame_resized)
+        frames.append(frame_rgb)
         
         # Update progress
         progress = (frame_count + 1) / num_frames
@@ -94,6 +89,46 @@ def extract_frames(video_path, start_frame=0, num_frames=9):
     
     return frames
 
+def display_navigation_controls(total_frames):
+    """Display navigation controls for frame pages"""
+    total_pages = math.ceil(total_frames / st.session_state.frames_per_page)
+    fps = st.session_state.video_info['fps']
+    duration = st.session_state.video_info['duration']
+    
+    # Add timestamp slider with navigation buttons
+    st.subheader("Video Timeline ⏱️")
+    
+    # Calculate current time based on page
+    current_time = (st.session_state.current_page * st.session_state.frames_per_page) / fps
+    
+    # First display the slider
+    selected_time = st.slider(
+        "Current Time",
+        min_value=0.0,
+        max_value=duration,
+        value=current_time,
+        step=1.0/fps,  # Step by one frame
+        format="%.2f seconds",
+        key="time_slider"
+    )
+    
+    # Update current page based on selected time
+    new_frame = int(selected_time * fps)
+    new_page = new_frame // st.session_state.frames_per_page
+    if new_page != st.session_state.current_page:
+        st.session_state.current_page = new_page
+    
+    # Display navigation buttons side by side
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("Previous Page", key="prev_page", disabled=st.session_state.current_page == 0):
+            st.session_state.current_page -= 1
+    
+    with col2:
+        if st.button("Next Page", key="next_page", disabled=st.session_state.current_page >= total_pages - 1):
+            st.session_state.current_page += 1
+
 def display_frames(frames, start_idx, end_idx):
     """Display frames in a grid with selection capability"""
     if not frames:
@@ -103,61 +138,42 @@ def display_frames(frames, start_idx, end_idx):
     n_cols = 3
     n_rows = 3  # Fixed 3x3 grid
     
-    for row in range(n_rows):
-        cols = st.columns(n_cols)
-        for col in range(n_cols):
-            # Calculate the frame index relative to the current page
-            frame_idx = row * n_cols + col
-            if frame_idx < len(frames):
-                with cols[col]:
-                    # Convert numpy array to PIL Image
-                    frame_pil = Image.fromarray(frames[frame_idx])
-                    
-                    # Create a clickable container
-                    container = st.container()
-                    with container:
-                        st.image(frame_pil, use_column_width=True)
+    # Use a container to prevent re-rendering
+    with st.container():
+        for row in range(n_rows):
+            cols = st.columns(n_cols)
+            for col in range(n_cols):
+                # Calculate the frame index relative to the current page
+                frame_idx = row * n_cols + col
+                if frame_idx < len(frames):
+                    with cols[col]:
+                        # Convert numpy array to PIL Image
+                        frame_pil = Image.fromarray(frames[frame_idx])
                         
-                        # Add frame number (using the actual frame number from start_idx)
-                        actual_frame_number = start_idx + frame_idx
-                        st.text(f"Frame {actual_frame_number + 1}")
-                        
-                        # Add checkbox for selection
-                        is_selected = st.checkbox(
-                            "Select",
-                            key=f"frame_{actual_frame_number}",
-                            value=actual_frame_number in st.session_state.selected_frames
-                        )
-                        
-                        if is_selected:
-                            st.session_state.selected_frames.add(actual_frame_number)
-                        else:
-                            st.session_state.selected_frames.discard(actual_frame_number)
-
-def display_navigation_controls(total_frames):
-    """Display navigation controls for frame pages"""
-    total_pages = math.ceil(total_frames / st.session_state.frames_per_page)
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
-    with col1:
-        if st.button("Previous Page", disabled=st.session_state.current_page == 0):
-            st.session_state.current_page -= 1
-    
-    with col2:
-        st.write(f"Page {st.session_state.current_page + 1} of {total_pages}")
-        st.write(f"Total Frames: {total_frames}")
-        st.write(f"Selected Frames: {len(st.session_state.selected_frames)}")
-        st.write(f"Frames per page: {st.session_state.frames_per_page}")
-    
-    with col3:
-        if st.button("Next Page", disabled=st.session_state.current_page >= total_pages - 1):
-            st.session_state.current_page += 1
+                        # Create a clickable container
+                        container = st.container()
+                        with container:
+                            st.image(frame_pil, use_column_width=True)
+                            
+                            # Add frame number (using the actual frame number from start_idx)
+                            actual_frame_number = start_idx + frame_idx
+                            st.text(f"Frame {actual_frame_number + 1}")
+                            
+                            # Add checkbox for selection with unique key
+                            is_selected = st.checkbox(
+                                "Select",
+                                key=f"frame_{actual_frame_number}",
+                                value=actual_frame_number in st.session_state.selected_frames
+                            )
+                            
+                            if is_selected:
+                                st.session_state.selected_frames.add(actual_frame_number)
+                            else:
+                                st.session_state.selected_frames.discard(actual_frame_number)
 
 if uploaded_file is not None:
     # Show file size
     file_size = uploaded_file.size / (1024 * 1024 * 1024)  # Convert to GB
-    st.write(f"File size: {file_size:.2f} GB")
     
     # Create a temporary file to store the uploaded video
     with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
@@ -168,11 +184,15 @@ if uploaded_file is not None:
     if not st.session_state.video_info:
         with st.spinner('Loading video information...'):
             st.session_state.video_info = get_video_info(st.session_state.temp_file_path)
-            st.write("Video Info:")
-            st.write(f"- Total Frames: {st.session_state.video_info['total_frames']}")
-            st.write(f"- FPS: {st.session_state.video_info['fps']}")
-            st.write(f"- Duration: {st.session_state.video_info['duration']:.2f} seconds")
-            st.write(f"- Resolution: {st.session_state.video_info['width']}x{st.session_state.video_info['height']}")
+    
+    # Display concise file information
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.write(f"File size: {file_size:.2f} GB")
+    with col2:
+        st.write(f"Total Duration: {st.session_state.video_info['duration']:.2f}s")
+    with col3:
+        st.write(f"Total Frames: {st.session_state.video_info['total_frames']}")
     
     # Calculate frame range for current page
     start_idx = st.session_state.current_page * st.session_state.frames_per_page
@@ -189,6 +209,10 @@ if uploaded_file is not None:
     # Display frames
     st.subheader("Video Frames")
     display_frames(frames, start_idx, end_idx)
+    
+    # Display selected frames count at the bottom
+    st.markdown("---")
+    st.write(f"Selected Frames: {len(st.session_state.selected_frames)}")
 else:
     # Clean up temporary file when no file is uploaded
     if st.session_state.temp_file_path and os.path.exists(st.session_state.temp_file_path):
