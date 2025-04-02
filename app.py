@@ -130,46 +130,40 @@ def display_navigation_controls(total_frames):
             st.session_state.current_page += 1
 
 def display_frames(frames, start_idx, end_idx):
-    """Display frames in a grid with selection capability"""
-    if not frames:
-        return
-    
-    # Calculate grid dimensions
-    n_cols = 3
-    n_rows = 3  # Fixed 3x3 grid
-    
-    # Use a container to prevent re-rendering
-    with st.container():
-        for row in range(n_rows):
-            cols = st.columns(n_cols)
-            for col in range(n_cols):
-                # Calculate the frame index relative to the current page
-                frame_idx = row * n_cols + col
-                if frame_idx < len(frames):
-                    with cols[col]:
-                        # Convert numpy array to PIL Image
-                        frame_pil = Image.fromarray(frames[frame_idx])
-                        
-                        # Create a clickable container
-                        container = st.container()
-                        with container:
-                            st.image(frame_pil, use_column_width=True)
-                            
-                            # Add frame number (using the actual frame number from start_idx)
-                            actual_frame_number = start_idx + frame_idx
-                            st.text(f"Frame {actual_frame_number + 1}")
-                            
-                            # Add checkbox for selection with unique key
-                            is_selected = st.checkbox(
-                                "Select",
-                                key=f"frame_{actual_frame_number}",
-                                value=actual_frame_number in st.session_state.selected_frames
-                            )
-                            
-                            if is_selected:
-                                st.session_state.selected_frames.add(actual_frame_number)
-                            else:
-                                st.session_state.selected_frames.discard(actual_frame_number)
+    """Display frames in a 3x3 grid with selection capabilities"""
+    # Create a 3x3 grid
+    for i in range(3):
+        cols = st.columns(3)
+        for j in range(3):
+            frame_idx = start_idx + (i * 3 + j)
+            if frame_idx < end_idx:
+                with cols[j]:
+                    # Convert frame to RGB for display
+                    frame = frames[frame_idx]
+                    
+                    # Create a container for the frame and its label
+                    container = st.container()
+                    
+                    # Display the frame
+                    st.image(frame, use_column_width=True)
+                    
+                    # Add frame number and selection checkbox
+                    frame_number = frame_idx + 1
+                    is_selected = frame_number in st.session_state.selected_frames
+                    
+                    # Show frame number and selection status
+                    if is_selected:
+                        st.markdown(f"<div style='text-align: center; color: #FF4B4B;'><b>Frame {frame_number}</b></div>", unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"<div style='text-align: center;'><b>Frame {frame_number}</b></div>", unsafe_allow_html=True)
+                    
+                    # Add checkbox for selection
+                    if st.checkbox("Select", key=f"select_{frame_number}", value=is_selected):
+                        if frame_number not in st.session_state.selected_frames:
+                            st.session_state.selected_frames.add(frame_number)
+                    else:
+                        if frame_number in st.session_state.selected_frames:
+                            st.session_state.selected_frames.discard(frame_number)
 
 if uploaded_file is not None:
     # Show file size
@@ -210,9 +204,14 @@ if uploaded_file is not None:
     st.subheader("Video Frames")
     display_frames(frames, start_idx, end_idx)
     
-    # Display selected frames count at the bottom
+    # Display selected frames information at the bottom
     st.markdown("---")
-    st.write(f"Selected Frames: {len(st.session_state.selected_frames)}")
+    if st.session_state.selected_frames:
+        # Sort the frames for better readability
+        sorted_frames = sorted(list(st.session_state.selected_frames))
+        st.write(f"Selected Frames ({len(st.session_state.selected_frames)}): {sorted_frames}")
+    else:
+        st.write("No frames selected")
 else:
     # Clean up temporary file when no file is uploaded
     if st.session_state.temp_file_path and os.path.exists(st.session_state.temp_file_path):
