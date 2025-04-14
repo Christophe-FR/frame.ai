@@ -65,117 +65,109 @@ def get_video_info(video_path):
     }
 
 def extract_frames(video_path, start_frame=0, num_frames=9):
-    """Extract frames from video file without skipping"""
+    """Extract frames dynamically for the current page."""
+    if 'frame_cache' not in st.session_state:
+        st.session_state.frame_cache = {}
+
+    cache_key = f"{video_path}_{start_frame}_{num_frames}"
+    if cache_key in st.session_state.frame_cache:
+        return st.session_state.frame_cache[cache_key]
+
     frames = []
     cap = cv2.VideoCapture(video_path)
-    
-    # Set initial frame position
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     
-    # Create a progress bar
+    # Progress bar
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    frame_count = 0
-    while frame_count < num_frames and cap.isOpened():
+    for i in range(num_frames):
         ret, frame = cap.read()
         if not ret:
             break
-            
-        # Convert BGR to RGB
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frames.append(frame_rgb)
-        
-        # Update progress
-        progress = (frame_count + 1) / num_frames
-        progress_bar.progress(progress)
-        status_text.text(f"Loading frame {frame_count + 1} of {num_frames}")
-            
-        frame_count += 1
-            
-    cap.release()
+        frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        progress_bar.progress((i + 1) / num_frames)
+        status_text.text(f"Loading frame {start_frame + i + 1}")
     
-    # Clear progress indicators
+    cap.release()
     progress_bar.empty()
     status_text.empty()
-    
+
+    st.session_state.frame_cache[cache_key] = frames
     return frames
 
 def display_navigation_controls(total_frames):
-    """Display navigation controls for frame pages"""
+    """Navigation controls with time slider and page info."""
     total_pages = math.ceil(total_frames / st.session_state.frames_per_page)
+    current_page = st.session_state.current_page
     fps = st.session_state.video_info['fps']
-    duration = st.session_state.video_info['duration']
-    
-    # Add timestamp slider with navigation buttons
-    st.subheader("Video Timeline ⏱️")
-    
-    # Calculate current time based on page
-    current_time = (st.session_state.current_page * st.session_state.frames_per_page) / fps
-    
-    # First display the slider
+    start_frame = current_page * st.session_state.frames_per_page
+    end_frame = min((current_page + 1) * st.session_state.frames_per_page, total_frames)
+
+    # Time slider (top)
     selected_time = st.slider(
-        "Current Time",
+        "Jump to Time",
         min_value=0.0,
-        max_value=duration,
-        value=current_time,
-        step=1.0/fps,  # Step by one frame
-        format="%.2f seconds",
+        max_value=st.session_state.video_info['duration'],
+        value=(start_frame / fps),
+        step=1.0/fps,
+        format="%.2f s",
         key="time_slider"
     )
-    
-    # Update current page based on selected time
-    new_frame = int(selected_time * fps)
-    new_page = new_frame // st.session_state.frames_per_page
-    if new_page != st.session_state.current_page:
-        st.session_state.current_page = new_page
-    
-    # Display navigation buttons side by side
-    col1, col2 = st.columns(2)
+
+    # Navigation controls (bottom)
+    col1, col2, col3 = st.columns([1, 2, 1])
     
     with col1:
-        if st.button("Previous Page", key="prev_page", disabled=st.session_state.current_page == 0):
+        if st.button("⬅️ Previous", disabled=current_page == 0):
             st.session_state.current_page -= 1
+            st.experimental_rerun()
     
     with col2:
-        if st.button("Next Page", key="next_page", disabled=st.session_state.current_page >= total_pages - 1):
+        st.markdown(
+            f"<div style='text-align: center; font-weight: bold;'>"
+            f"Page {current_page + 1}/{total_pages} | Frames {start_frame + 1}-{end_frame} of {total_frames}"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+    
+    with col3:
+        if st.button("➡️ Next", disabled=current_page >= total_pages - 1):
             st.session_state.current_page += 1
+            st.experimental_rerun()
+
+    # Update page if slider is moved
+    new_page = int(selected_time * fps) // st.session_state.frames_per_page
+    if new_page != current_page:
+        st.session_state.current_page = new_page
+        st.experimental_rerun()
 
 def display_frames(frames, start_idx, end_idx):
-    """Display frames in a 3x3 grid with selection capabilities"""
-    # Create a 3x3 grid
-    for i in range(3):
-        cols = st.columns(3)
-        for j in range(3):
-            frame_idx = start_idx + (i * 3 + j)
-            if frame_idx < end_idx:
-                with cols[j]:
-                    # Convert frame to RGB for display
-                    frame = frames[frame_idx]
-                    
-                    # Create a container for the frame and its label
-                    container = st.container()
-                    
-                    # Display the frame
-                    st.image(frame, use_column_width=True)
-                    
-                    # Add frame number and selection checkbox
-                    frame_number = frame_idx + 1
-                    is_selected = frame_number in st.session_state.selected_frames
-                    
-                    # Show frame number and selection status
-                    if is_selected:
-                        st.markdown(f"<div style='text-align: center; color: #FF4B4B;'><b>Frame {frame_number}</b></div>", unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"<div style='text-align: center;'><b>Frame {frame_number}</b></div>", unsafe_allow_html=True)
-                    
-                    # Add checkbox for selection 
-                    if st.checkbox("Select", key=f"select_{frame_number}", value=is_selected):
-                        if frame_number not in st.session_state.selected_frames:
-                            st.session_state.selected_frames.add(frame_number)
-                    else:
-                        if frame_number in st.session_state.selected_frames:
-                            st.session_state.selected_frames.discard(frame_number)
+    """Display frames with selection checkboxes."""
+    grid = st.columns(3)
+    for i, frame in enumerate(frames):
+        col = grid[i % 3]
+        frame_number = start_idx + i + 1
+        is_selected = frame_number in st.session_state.selected_frames
+
+        with col:
+            st.image(frame, use_column_width=True, caption=f"Frame {frame_number}")
+            if st.checkbox(
+                "Select", 
+                key=f"select_{frame_number}", 
+                value=is_selected,
+                label_visibility="collapsed"
+            ):
+                st.session_state.selected_frames.add(frame_number)
+            else:
+                st.session_state.selected_frames.discard(frame_number)
+
+            # Highlight selected frames
+            if is_selected:
+                st.markdown(
+                    f"<style>div[data-testid='stImage']:has(> img[alt='Frame {frame_number}']) {{border: 2px solid #FF4B4B;}}</style>",
+                    unsafe_allow_html=True
+                )
 
 def encode_frame_to_base64(frame_rgb: np.ndarray) -> str:
     """Encode an RGB frame to base64."""
@@ -292,16 +284,7 @@ if uploaded_file is not None:
     if not st.session_state.video_info:
         with st.spinner('Loading video information...'):
             st.session_state.video_info = get_video_info(st.session_state.temp_file_path)
-    
-    # Display concise file information
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.write(f"File size: {file_size:.2f} GB")
-    with col2:
-        st.write(f"Total Duration: {st.session_state.video_info['duration']:.2f}s")
-    with col3:
-        st.write(f"Total Frames: {st.session_state.video_info['total_frames']}")
-    
+
     # Calculate frame range for current page
     start_idx = st.session_state.current_page * st.session_state.frames_per_page
     end_idx = min(start_idx + st.session_state.frames_per_page, 
