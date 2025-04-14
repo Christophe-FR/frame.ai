@@ -7,6 +7,11 @@ import io
 import tempfile
 import os
 import math
+import redis
+import json
+import base64
+import uuid
+from typing import Dict, Any
 
 # Set page config
 st.set_page_config(
@@ -33,6 +38,11 @@ st.title("Video Frame Selector 🎥")
 # File uploader with size limit message
 st.write("Upload a video file (max 4GB)")
 uploaded_file = st.file_uploader("Choose a video file", type=['mp4', 'avi', 'mov'])
+
+REDIS_HOST = "localhost"  # or "redis" if using Docker
+REDIS_PORT = 6379
+TASK_QUEUE = "frame_interpolation_tasks"
+RESULT_QUEUE = "frame_interpolation_results"
 
 def get_video_info(video_path):
     """Get video information"""
@@ -157,13 +167,82 @@ def display_frames(frames, start_idx, end_idx):
                     else:
                         st.markdown(f"<div style='text-align: center;'><b>Frame {frame_number}</b></div>", unsafe_allow_html=True)
                     
-                    # Add checkbox for selection
+                    # Add checkbox for selection 
                     if st.checkbox("Select", key=f"select_{frame_number}", value=is_selected):
                         if frame_number not in st.session_state.selected_frames:
                             st.session_state.selected_frames.add(frame_number)
                     else:
                         if frame_number in st.session_state.selected_frames:
                             st.session_state.selected_frames.discard(frame_number)
+
+def encode_frame_to_base64(frame_rgb: np.ndarray) -> str:
+    """Encode an RGB frame to base64."""
+    _, buffer = cv2.imencode(".png", cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR))
+    return base64.b64encode(buffer).decode("utf-8")
+
+def submit_to_worker(prev_img: np.ndarray, next_img: np.ndarray, separation: int, task_id: str) -> bool:
+    """Submit frames with separation parameter."""
+    try:
+        r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT)
+        
+        task_data = {
+            "image1": encode_frame_to_base64(prev_img),
+            "image2": encode_frame_to_base64(next_img),
+            "num_frames": separation,  # Now dynamic
+            "task_id": task_id
+        }
+        
+        r.rpush(TASK_QUEUE, json.dumps(task_data))
+        print(f"Submitted task (separation={separation})")  # Debug
+        return True
+    except Exception as e:
+        print(f"Submission error: {str(e)}")
+        return False
+
+def get_worker_result(task_id: str, timeout: int = 60) -> list:
+    """Retrieve processed frames from Redis."""
+    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT)
+    try:
+        _, result_json = r.blpop(RESULT_QUEUE, timeout=timeout)
+        if result_json:
+            result = json.loads(result_json)
+            if result["task_id"] == task_id: 
+                return result["interpolated_frames"]
+    except Exception as e:
+        st.error(f"Result retrieval failed: {str(e)}")
+    return None
+
+def get_video_codec(video_path):
+    """Detect the video codec of the input file"""
+    cap = cv2.VideoCapture(video_path)
+    fourcc = int(cap.get(cv2.CAP_PROP_FOURCC))
+    codec = chr(fourcc & 0xff) + chr((fourcc >> 8) & 0xff) + chr((fourcc >> 16) & 0xff) + chr((fourcc >> 24) & 0xff)
+    cap.release()
+    return codec
+
+def create_video_from_frames(frames, output_path, input_video_path):
+    """Create a video file with H.264 encoding"""
+    cap = cv2.VideoCapture(input_video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.release()
+
+    # Try multiple codecs for compatibility
+    for codec in ['avc1', 'mp4v', 'X264']:
+        try:
+            fourcc = cv2.VideoWriter_fourcc(*codec)
+            out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+            if out.isOpened():
+                for frame in frames:
+                    out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+                out.release()
+                return True
+        except Exception as e:
+            st.warning(f"Failed to use codec {codec}: {str(e)}")
+    
+    st.error("Failed to create video: No compatible codec found")
+    return False
 
 if uploaded_file is not None:
     # Show file size
@@ -212,6 +291,86 @@ if uploaded_file is not None:
         st.write(f"Selected Frames ({len(st.session_state.selected_frames)}): {sorted_frames}")
     else:
         st.write("No frames selected")
+
+    if st.button("🚀 Run Algorithm", key="run_algorithm"):
+        if hasattr(st.session_state, 'selected_frames') and st.session_state.selected_frames:
+            # Initialize variables for video reconstruction
+            all_frames = []
+            cap = cv2.VideoCapture(st.session_state.temp_file_path)
+            fps = st.session_state.video_info['fps']
+            width = st.session_state.video_info['width']
+            height = st.session_state.video_info['height']
+            
+            # Read all original frames
+            original_frames = []
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                original_frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            cap.release()
+            
+            # Process selected ranges
+            modified_frames = original_frames.copy()
+            sorted_frames = sorted(st.session_state.selected_frames)
+            ranges = []
+            current_range = [sorted_frames[0]]
+            
+            for i in range(1, len(sorted_frames)):
+                if sorted_frames[i] == sorted_frames[i-1] + 1:
+                    current_range.append(sorted_frames[i])
+                else:
+                    ranges.append(current_range)
+                    current_range = [sorted_frames[i]]
+            ranges.append(current_range)
+            
+            for frame_range in ranges:
+                first = frame_range[0]
+                last = frame_range[-1]
+                prev_frame = first - 1 if first > 1 else None
+                next_frame = last + 1 if last < st.session_state.video_info['total_frames'] else None
+                
+                if prev_frame and next_frame:
+                    prev_img = extract_frames(st.session_state.temp_file_path, prev_frame-1, 1)[0]
+                    next_img = extract_frames(st.session_state.temp_file_path, next_frame-1, 1)[0]
+                    task_id = str(uuid.uuid4())
+                    
+                    if submit_to_worker(prev_img, next_img, next_frame - prev_frame - 1, task_id):
+                        st.success(f"⚡ Job ID: {task_id} | Frames to Replace: {first}...{last} | Worker Input Pair: Frame {prev_frame} & Frame {next_frame}")
+                        
+                        with st.spinner(f"Generating {next_frame - prev_frame - 1} intermediate frames..."):
+                            result_frames = get_worker_result(task_id)
+                            
+                            if result_frames:
+                                # Replace frames in the modified_frames list
+                                for i, frame_b64 in enumerate(result_frames):
+                                    frame_idx = first - 1 + i
+                                    frame = cv2.imdecode(np.frombuffer(base64.b64decode(frame_b64), np.uint8), cv2.IMREAD_COLOR)
+                                    modified_frames[frame_idx] = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+            # Create new video
+            output_path = "modified_video.mp4"
+            if create_video_from_frames(modified_frames, output_path, st.session_state.temp_file_path):
+                # Display video
+                st.subheader("Modified Video Preview")
+                try:
+                    with open(output_path, "rb") as f:
+                        video_bytes = f.read()
+                        st.video(video_bytes, format="video/mp4")
+                        
+                        # Download button
+                        st.download_button(
+                            label="Download Modified Video",
+                            data=video_bytes,
+                            file_name=f"modified_{uploaded_file.name}",
+                            mime="video/mp4"
+                        )
+                except Exception as e:
+                    st.error(f"Video display error: {str(e)}")
+            else:
+                st.error("Video creation failed - please check FFmpeg installation")
+        else:
+            st.warning("No frames selected!")
 else:
     # Clean up temporary file when no file is uploaded
     if st.session_state.temp_file_path and os.path.exists(st.session_state.temp_file_path):
@@ -232,4 +391,6 @@ st.markdown("""
     transform: scale(1.05);
 }
 </style>
-""", unsafe_allow_html=True) 
+""", unsafe_allow_html=True)
+
+st.write(cv2.getBuildInformation()) 

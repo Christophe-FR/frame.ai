@@ -29,35 +29,38 @@ def process_task(task_data: Dict[str, Any]) -> Dict[str, Any]:
         # Decode images from base64
         image1 = base64.b64decode(task_data["image1"])
         image2 = base64.b64decode(task_data["image2"])
-        time = task_data.get("time", 0.5)  # Default to midway interpolation
+        num_frames = task_data.get("num_frames", 1)  # Default to 1 frame
 
         # Load and preprocess images
         image1 = load_image(image1)
         image2 = load_image(image2)
 
-        # Prepare model input with correct shapes
-        input_dict = {
-            "time": np.array([[time]], dtype=np.float32),  # Shape: (batch_size=1, 1)
-            "x0": np.expand_dims(image1, axis=0),  # Shape: (1, height, width, 3)
-            "x1": np.expand_dims(image2, axis=0),  # Shape: (1, height, width, 3)
-        }
+        interpolated_frames = []
+        for i in range(1, num_frames + 1):
+            time = i / (num_frames + 1)  # Evenly spaced times between 0 and 1
 
-        # Run interpolation
-        result = model(input_dict)
-        interpolated_frame = result["image"][0].numpy()
+            # Prepare model input
+            input_dict = {
+                "time": np.array([[time]], dtype=np.float32),
+                "x0": np.expand_dims(image1, axis=0),
+                "x1": np.expand_dims(image2, axis=0),
+            }
 
-        # Ensure the frame is in [0, 255] range and convert to uint8
-        interpolated_frame_uint8 = (np.clip(interpolated_frame, 0, 1) * 255).astype(np.uint8)
+            # Run interpolation
+            print("Running interpolation for time:", time)
+            result = model(input_dict)
+            interpolated_frame = result["image"][0].numpy()
 
-        # Encode the result as PNG and then to base64
-        success, buffer = cv2.imencode(".png", cv2.cvtColor(interpolated_frame_uint8, cv2.COLOR_RGB2BGR))
-        if not success:
-            raise ValueError("Failed to encode frame as PNG")
-        interpolated_image_b64 = base64.b64encode(buffer).decode("utf-8")
+            # Convert to uint8 and encode as PNG
+            interpolated_frame_uint8 = (np.clip(interpolated_frame, 0, 1) * 255).astype(np.uint8)
+            success, buffer = cv2.imencode(".png", cv2.cvtColor(interpolated_frame_uint8, cv2.COLOR_RGB2BGR))
+            if not success:
+                raise ValueError("Failed to encode frame as PNG")
+            interpolated_frames.append(base64.b64encode(buffer).decode("utf-8"))
 
         return {
             "task_id": task_data.get("task_id", ""),
-            "interpolated_frame": interpolated_image_b64,
+            "interpolated_frames": interpolated_frames,
         }
     except Exception as e:
         print(f"Error in process_task: {e}")
