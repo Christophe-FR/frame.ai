@@ -8,5 +8,5 @@
     "runArgs": [
         "--gpus", "all"
     ],
-    "postCreateCommand": "apt-get update && apt-get install -y redis-server && redis-server --daemonize yes"
+    "postCreateCommand": "apt-get update && apt-get install -y redis-server=5:5.0.7-2ubuntu0.1 ffmpeg=7:4.2.7-0ubuntu0.1 && pip install -r requirements.txt && chmod +x /workspace/start.sh && /workspace/start.sh"
 }
