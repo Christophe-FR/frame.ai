@@ -70,8 +70,9 @@ def main():
     # Connect to Redis
     r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT)
 
-    print("Worker started. Listening for tasks...")
+    
     while True:
+        print("Listening for tasks...")
         # Blocking pop from the task queue
         _, task_json = r.blpop(TASK_QUEUE)
         task_data = json.loads(task_json)
