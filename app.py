@@ -14,6 +14,7 @@ import uuid
 from typing import Dict, Any
 import subprocess
 from stqdm import stqdm
+from utils_redis_worker import submit_task, retrieve_result
 
 # Set page config
 st.set_page_config(
@@ -169,39 +170,6 @@ def display_frames(frames, start_idx, end_idx):
                     f"<style>div[data-testid='stImage']:has(> img[alt='Frame {frame_number}']) {{border: 2px solid #FF4B4B;}}</style>",
                     unsafe_allow_html=True
                 )
-
-def encode_frame_to_base64(frame_rgb: np.ndarray) -> str:
-    """Encode an RGB frame to base64."""
-    _, buffer = cv2.imencode(".png", cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR))
-    return base64.b64encode(buffer).decode("utf-8")
-
-def submit_to_worker(prev_img: np.ndarray, next_img: np.ndarray, separation: int, task_id: str) -> bool:
-    """Submit frames with separation parameter (silent mode)."""
-    try:
-        r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT)
-        task_data = {
-            "image1": encode_frame_to_base64(prev_img),
-            "image2": encode_frame_to_base64(next_img),
-            "num_frames": separation,
-            "task_id": task_id
-        }
-        r.rpush(TASK_QUEUE, json.dumps(task_data))
-        return True
-    except Exception:
-        return False
-
-def get_worker_result(task_id: str, timeout: int = 60) -> list:
-    """Retrieve processed frames from Redis."""
-    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT)
-    try:
-        _, result_json = r.blpop(RESULT_QUEUE, timeout=timeout)
-        if result_json:
-            result = json.loads(result_json)
-            if result["task_id"] == task_id: 
-                return result["interpolated_frames"]
-    except Exception as e:
-        st.error(f"Result retrieval failed: {str(e)}")
-    return None
 
 def get_video_codec(video_path):
     """Detect the video codec of the input file"""
@@ -379,16 +347,16 @@ if uploaded_file is not None:
                         
                         task_id = str(uuid.uuid4())
                         
-                        if submit_to_worker(prev_img, next_img, next_frame - prev_frame - 1, task_id):
-                            result_frames = get_worker_result(task_id)
+                        if submit_task(prev_img, next_img, next_frame - prev_frame - 1, task_id):
+                            result = retrieve_result(task_id)
                             
-                            if result_frames:
+                            if result and "interpolated_frames" in result:
                                 interpolated_frames = [
                                     cv2.cvtColor(
                                         cv2.imdecode(np.frombuffer(base64.b64decode(frame_b64), np.uint8), cv2.IMREAD_COLOR),
                                         cv2.COLOR_BGR2RGB
                                     )
-                                    for frame_b64 in result_frames
+                                    for frame_b64 in result["interpolated_frames"]
                                 ]
 
                                 replace_start = first - 1
