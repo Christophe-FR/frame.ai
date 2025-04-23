@@ -172,7 +172,7 @@ def get_video_codec(video_path):
     return codec
 
 def create_video_from_frames(frames, output_path, input_video_path, start_frame, end_frame):
-    """Replace frames in the input video with the provided frames while preserving original quality and format."""
+    """Replace frames in the input video with the provided frames while preserving original quality, format, and audio."""
     try:
         # Step 1: Get original video properties
         cap = cv2.VideoCapture(input_video_path)
@@ -222,12 +222,14 @@ def create_video_from_frames(frames, output_path, input_video_path, start_frame,
             ]
             subprocess.run(cmd, check=True)
 
-            # Step 4: Re-encode to final format while preserving quality and original container
+            # Step 4: Re-encode to final format while preserving quality, original container, and audio
             if input_ext == '.avi':
                 # For AVI files, use FFV1 codec which is well-supported in AVI containers
                 cmd = [
                     "ffmpeg", "-y", "-i", temp_output,
+                    "-i", input_video_path,  # Add original video as second input for audio
                     "-c:v", "ffv1",  # Lossless codec
+                    "-c:a", "copy",  # Copy audio without re-encoding
                     "-pix_fmt", "yuv420p",
                     "-f", "avi",  # Force AVI container
                     output_path
@@ -236,13 +238,13 @@ def create_video_from_frames(frames, output_path, input_video_path, start_frame,
                 # For other formats (MP4, MOV), use H.264 with lossless settings
                 cmd = [
                     "ffmpeg", "-y", "-i", temp_output,
+                    "-i", input_video_path,  # Add original video as second input for audio
                     "-c:v", "libx264",  # H.264 codec
+                    "-c:a", "copy",  # Copy audio without re-encoding
                     "-preset", "veryslow",  # Best compression
                     "-crf", "0",  # Lossless
                     "-pix_fmt", "yuv420p",
                     "-movflags", "+faststart",
-                    "-c:a", "aac",
-                    "-ar", "44100",
                     output_path
                 ]
             subprocess.run(cmd, check=True)
@@ -259,16 +261,16 @@ def create_video_from_frames(frames, output_path, input_video_path, start_frame,
         return False
 
 def reencode_video(input_path, output_path):
-    """Re-encode video using FFmpeg with lossless settings."""
+    """Re-encode video using FFmpeg with lossless settings while preserving audio."""
     try:
         cmd = [
             "ffmpeg", "-y", "-i", input_path,
             "-c:v", "libx264",  # H.264 codec
+            "-c:a", "copy",  # Copy audio without re-encoding
             "-preset", "veryslow",  # Best compression
             "-crf", "0",  # Lossless
             "-pix_fmt", "yuv420p",
             "-movflags", "+faststart",
-            "-an",  # Remove audio
             output_path
         ]
         subprocess.run(cmd, check=True)
