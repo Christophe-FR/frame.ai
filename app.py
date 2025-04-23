@@ -172,18 +172,19 @@ def get_video_codec(video_path):
     return codec
 
 def create_video_from_frames(frames, output_path, input_video_path, start_frame, end_frame):
-    """Replace frames in the input video with the provided frames and re-encode for browser compatibility."""
+    """Replace frames in the input video with the provided frames while preserving original quality and format."""
     try:
-        # Step 1: Replace frames and save a temporary video
-        temp_output = "temp_video.mp4"
-        
-        # Read the original video and extract all frames
+        # Step 1: Get original video properties
         cap = cv2.VideoCapture(input_video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
+        original_codec = get_video_codec(input_video_path)
+        
+        # Get input file extension
+        input_ext = os.path.splitext(input_video_path)[1].lower()
+        
         # Read all frames from the original video
         original_frames = []
         while True:
@@ -200,31 +201,52 @@ def create_video_from_frames(frames, output_path, input_video_path, start_frame,
             else:
                 st.warning(f"🔍 Debug: Frame index {start_frame + i} is out of bounds")
 
-        # Write the updated frames to a temporary video (using mp4v codec)
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        temp_writer = cv2.VideoWriter(temp_output, fourcc, fps, (width, height))
-        for frame in original_frames:
-            temp_writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-        temp_writer.release()
+        # Create a temporary directory for intermediate files
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Step 2: Save frames as lossless PNG files
+            frame_files = []
+            for i, frame in enumerate(original_frames):
+                frame_path = os.path.join(temp_dir, f"frame_{i:06d}.png")
+                cv2.imwrite(frame_path, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+                frame_files.append(frame_path)
 
-        # Step 2: Re-encode the temporary video for browser compatibility
-        cmd = [
-            "ffmpeg", "-y", "-i", temp_output,
-            "-c:v", "libx264",       # H.264 codec
-            "-preset", "fast",       # Balance between speed and compression
-            "-crf", "23",            # Quality (lower = better, 18-28 is typical)
-            "-pix_fmt", "yuv420p",   # Required for browser playback
-            "-movflags", "+faststart",  # Enable streaming
-            "-c:a", "aac",           # Add silent audio track (required by some browsers)
-            "-ar", "44100",          # Audio sample rate
-            "-f", "mp4",             # Force MP4 container
-            output_path
-        ]
+            # Step 3: Create a lossless intermediate video
+            temp_output = os.path.join(temp_dir, "temp_video.mkv")
+            cmd = [
+                "ffmpeg", "-y",
+                "-framerate", str(fps),
+                "-i", os.path.join(temp_dir, "frame_%06d.png"),
+                "-c:v", "ffv1",  # Lossless codec
+                "-pix_fmt", "yuv420p",
+                temp_output
+            ]
+            subprocess.run(cmd, check=True)
 
-        # Execute the command
-        subprocess.run(cmd, check=True)
+            # Step 4: Re-encode to final format while preserving quality and original container
+            if input_ext == '.avi':
+                # For AVI files, use FFV1 codec which is well-supported in AVI containers
+                cmd = [
+                    "ffmpeg", "-y", "-i", temp_output,
+                    "-c:v", "ffv1",  # Lossless codec
+                    "-pix_fmt", "yuv420p",
+                    "-f", "avi",  # Force AVI container
+                    output_path
+                ]
+            else:
+                # For other formats (MP4, MOV), use H.264 with lossless settings
+                cmd = [
+                    "ffmpeg", "-y", "-i", temp_output,
+                    "-c:v", "libx264",  # H.264 codec
+                    "-preset", "veryslow",  # Best compression
+                    "-crf", "0",  # Lossless
+                    "-pix_fmt", "yuv420p",
+                    "-movflags", "+faststart",
+                    "-c:a", "aac",
+                    "-ar", "44100",
+                    output_path
+                ]
+            subprocess.run(cmd, check=True)
 
-        # Debug: Confirm the output video exists
         if os.path.exists(output_path):
             st.write(f"🔍 Debug: Successfully created output video at {output_path}")
             return True
@@ -235,22 +257,18 @@ def create_video_from_frames(frames, output_path, input_video_path, start_frame,
     except Exception as e:
         st.error(f"🔍 Debug: Video frame replacement failed: {str(e)}")
         return False
-    finally:
-        # Clean up temporary files
-        if os.path.exists(temp_output):
-            os.remove(temp_output)
 
 def reencode_video(input_path, output_path):
-    """Re-encode video using FFmpeg with strict H.264 settings."""
+    """Re-encode video using FFmpeg with lossless settings."""
     try:
         cmd = [
-            "ffmpeg", "-i", input_path,
-            "-c:v", "libx264",       # Force H.264
-            "-preset", "ultrafast",  # Speed up encoding (adjust if quality is poor)
-            "-crf", "18",            # Higher quality (lower = better, 18-28 is typical)
-            "-pix_fmt", "yuv420p",   # Mandatory for browser playback
-            "-movflags", "+faststart",  # Enable streaming
-            "-an",                   # Remove audio (if any)
+            "ffmpeg", "-y", "-i", input_path,
+            "-c:v", "libx264",  # H.264 codec
+            "-preset", "veryslow",  # Best compression
+            "-crf", "0",  # Lossless
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            "-an",  # Remove audio
             output_path
         ]
         subprocess.run(cmd, check=True)
@@ -268,6 +286,9 @@ def process_selected_frames(video_path, selected_frames):
     # Initialize interpolation client if not already done
     if st.session_state.interpolation_client is None:
         st.session_state.interpolation_client = FrameInterpolationClient()
+
+    # Get input file extension
+    input_ext = os.path.splitext(video_path)[1].lower()
 
     # Sort selected frames
     sorted_frames = sorted(selected_frames)
@@ -337,8 +358,8 @@ def process_selected_frames(video_path, selected_frames):
                     st.error(f"Error processing frames {first}-{last}: {e}")
                     continue
 
-        # Create output video path
-        output_path = os.path.join(temp_dir, "processed_video.mp4")
+        # Create output video path with the same extension as input
+        output_path = os.path.join(temp_dir, f"processed_video{input_ext}")
         
         # Create video from processed frames
         if create_video_from_frames(
@@ -348,24 +369,26 @@ def process_selected_frames(video_path, selected_frames):
             0,
             len(original_frames) - 1
         ):
-            # Re-encode for browser compatibility
-            final_output = os.path.join(temp_dir, "final_video.mp4")
-            if reencode_video(output_path, final_output):
+            # For browser preview, we need to create an MP4 version
+            preview_path = os.path.join(temp_dir, "preview.mp4")
+            if reencode_video(output_path, preview_path):
                 # Display video preview
                 st.success("Video processing completed successfully!")
-                with open(final_output, "rb") as f:
+                with open(preview_path, "rb") as f:
                     video_bytes = f.read()
                     st.video(video_bytes, format="video/mp4")
-                    
-                    # Display download button
+                
+                # Display download button with original format
+                with open(output_path, "rb") as f:
+                    download_bytes = f.read()
                     st.download_button(
                         label="Download Processed Video",
-                        data=video_bytes,
-                        file_name="processed_video.mp4",
-                        mime="video/mp4"
+                        data=download_bytes,
+                        file_name=f"processed_video{input_ext}",
+                        mime=f"video/{input_ext[1:]}"  # Remove the dot from extension
                     )
             else:
-                st.error("Failed to re-encode video for browser compatibility")
+                st.error("Failed to create video preview")
         else:
             st.error("Failed to create processed video")
 
@@ -374,8 +397,11 @@ if uploaded_file is not None:
     # Show file size
     file_size = uploaded_file.size / (1024 * 1024 * 1024)  # Convert to GB
     
-    # Create a temporary file to store the uploaded video
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
+    # Get the original file extension
+    original_ext = os.path.splitext(uploaded_file.name)[1].lower()
+    
+    # Create a temporary file to store the uploaded video with original extension
+    with tempfile.NamedTemporaryFile(delete=False, suffix=original_ext) as tmp_file:
         tmp_file.write(uploaded_file.getvalue())
         st.session_state.temp_file_path = tmp_file.name
     
