@@ -48,6 +48,45 @@ def denormalize(frame: np.ndarray) -> np.ndarray:
     """Convert frame from float [0, 1] to uint8 [0, 255]."""
     return (np.clip(frame, 0, 1) * 255).astype(np.uint8)
 
+def resize_frame(frame: np.ndarray, max_width: int = 2048, max_height: int = 1080) -> tuple:
+    """Resize frame if it exceeds maximum dimensions while maintaining aspect ratio.
+    
+    Args:
+        frame: Input frame as numpy array
+        max_width: Maximum allowed width
+        max_height: Maximum allowed height
+        
+    Returns:
+        tuple: (resized_frame, original_shape)
+    """
+    height, width = frame.shape[:2]
+    original_shape = (width, height)
+    
+    # Check if resizing is needed
+    if width <= max_width and height <= max_height:
+        return frame, original_shape
+    
+    # Calculate new dimensions while maintaining aspect ratio
+    scale = min(max_width / width, max_height / height)
+    new_width = int(width * scale)
+    new_height = int(height * scale)
+    
+    # Resize the frame
+    resized = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
+    return resized, original_shape
+
+def restore_frame_size(frame: np.ndarray, original_shape: tuple) -> np.ndarray:
+    """Restore frame to its original size.
+    
+    Args:
+        frame: Resized frame as numpy array
+        original_shape: Original (width, height) tuple
+        
+    Returns:
+        Restored frame as numpy array
+    """
+    return cv2.resize(frame, original_shape, interpolation=cv2.INTER_LANCZOS4)
+
 def interpolate_frames(frame1: np.ndarray, frame2: np.ndarray, num_frames: int = 1) -> List[np.ndarray]:
     """Interpolate frames using FILM model.
 
@@ -59,23 +98,32 @@ def interpolate_frames(frame1: np.ndarray, frame2: np.ndarray, num_frames: int =
     Returns:
         List of interpolated frames as numpy arrays (RGB uint8)
     """
+    # Resize frames if needed
+    frame1_resized, original_shape = resize_frame(frame1)
+    frame2_resized, _ = resize_frame(frame2)
+    
     interpolated = []
-
-    frame1 = normalize(frame1)
-    frame2 = normalize(frame2)
+    frame1_norm = normalize(frame1_resized)
+    frame2_norm = normalize(frame2_resized)
 
     for i in range(1, num_frames + 1):
         time = i / (num_frames + 1)
         input_dict = {
             "time": np.array([[time]], dtype=np.float32),
-            "x0": np.expand_dims(frame1, axis=0),
-            "x1": np.expand_dims(frame2, axis=0),
+            "x0": np.expand_dims(frame1_norm, axis=0),
+            "x1": np.expand_dims(frame2_norm, axis=0),
         }
         result = model(input_dict)
         interpolated_frame = result["image"][0].numpy()
         interpolated.append(denormalize(interpolated_frame))
-
-    return interpolated
+    
+    # Restore original size for all frames
+    restored_frames = []
+    for frame in interpolated:
+        restored = restore_frame_size(frame, original_shape)
+        restored_frames.append(restored)
+    
+    return restored_frames
 
 def save_frames(frames: List[np.ndarray], prefix: str = "interpolated") -> List[str]:
     """Save frames to disk."""

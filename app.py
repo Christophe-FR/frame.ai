@@ -411,6 +411,9 @@ if uploaded_file is not None:
     if not st.session_state.video_info:
         with st.spinner('Loading video information...'):
             st.session_state.video_info = get_video_info(st.session_state.temp_file_path)
+            
+        # Display video information
+        st.write(f"ℹ️ Resolution: {st.session_state.video_info['width']}x{st.session_state.video_info['height']}, FPS: {st.session_state.video_info['fps']}")
 
     # Calculate frame range for current page
     start_idx = st.session_state.current_page * st.session_state.frames_per_page
