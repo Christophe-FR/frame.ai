@@ -7,14 +7,9 @@ import io
 import tempfile
 import os
 import math
-import redis
-import json
-import base64
-import uuid
-from typing import Dict, Any
 import subprocess
 from stqdm import stqdm
-from utils_redis_worker import submit_task, retrieve_result
+from frame_interpolation_client import FrameInterpolationClient
 
 # Set page config
 st.set_page_config(
@@ -34,6 +29,8 @@ if 'video_info' not in st.session_state:
     st.session_state.video_info = None
 if 'temp_file_path' not in st.session_state:
     st.session_state.temp_file_path = None
+if 'interpolation_client' not in st.session_state:
+    st.session_state.interpolation_client = None
 
 # Add a title
 st.title("Remove this Flash ⚡🎥")
@@ -42,11 +39,6 @@ st.write("The AI solution to remove flash from videos and replace individual fra
 
 # File uploader with size limit message
 uploaded_file = st.file_uploader("Upload a video file (max 4GB)", type=['mp4', 'avi', 'mov'])
-
-REDIS_HOST = "localhost"  # or "redis" if using Docker
-REDIS_PORT = 6379
-TASK_QUEUE = "frame_interpolation_tasks"
-RESULT_QUEUE = "frame_interpolation_results"
 
 def get_video_info(video_path):
     """Get video information"""
@@ -267,6 +259,117 @@ def reencode_video(input_path, output_path):
         st.error(f"FFmpeg re-encoding failed: {str(e)}")
         return False
 
+def process_selected_frames(video_path, selected_frames):
+    """Process selected frames using frame interpolation."""
+    if not selected_frames:
+        st.warning("No frames selected. Please select frames to process.")
+        return
+
+    # Initialize interpolation client if not already done
+    if st.session_state.interpolation_client is None:
+        st.session_state.interpolation_client = FrameInterpolationClient()
+
+    # Sort selected frames
+    sorted_frames = sorted(selected_frames)
+    
+    # Create a temporary directory for processed frames
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Initialize variables for video reconstruction
+        cap = cv2.VideoCapture(video_path)
+        original_frames = []
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            original_frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        cap.release()
+
+        # Process all selected ranges first
+        ranges = []
+        current_range = [sorted_frames[0]]
+        
+        for i in range(1, len(sorted_frames)):
+            if sorted_frames[i] == sorted_frames[i-1] + 1:
+                current_range.append(sorted_frames[i])
+            else:
+                ranges.append(current_range)
+                current_range = [sorted_frames[i]]
+        ranges.append(current_range)
+
+        # Process all ranges before creating final video
+        progress_bar = stqdm(ranges, desc="Processing frame ranges")
+        for frame_range in progress_bar:
+            first, last = frame_range[0], frame_range[-1]
+            progress_bar.set_description(f"Processing frames {first}-{last}")
+            
+            prev_frame = first - 1 if first > 1 else None
+            next_frame = last + 1 if last < st.session_state.video_info['total_frames'] else None
+            
+            if prev_frame and next_frame:
+                # Extract frames
+                cap = cv2.VideoCapture(video_path)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, prev_frame - 1)
+                _, frame1 = cap.read()
+                cap.set(cv2.CAP_PROP_POS_FRAMES, next_frame - 1)
+                _, frame2 = cap.read()
+                cap.release()
+                
+                # Convert to RGB
+                frame1_rgb = cv2.cvtColor(frame1, cv2.COLOR_BGR2RGB)
+                frame2_rgb = cv2.cvtColor(frame2, cv2.COLOR_BGR2RGB)
+                
+                try:
+                    # Process frames using interpolation client
+                    interpolated_frames = st.session_state.interpolation_client.process_frames(
+                        frame1_rgb, frame2_rgb, num_frames=next_frame - prev_frame - 1
+                    )
+                    
+                    # Replace frames in the original video
+                    replace_start = first - 1
+                    replace_end = last - 1
+                    
+                    for i in range(len(interpolated_frames)):
+                        pos = replace_start + i
+                        if pos < len(original_frames):
+                            original_frames[pos] = interpolated_frames[i]
+                            
+                except Exception as e:
+                    st.error(f"Error processing frames {first}-{last}: {e}")
+                    continue
+
+        # Create output video path
+        output_path = os.path.join(temp_dir, "processed_video.mp4")
+        
+        # Create video from processed frames
+        if create_video_from_frames(
+            original_frames,
+            output_path,
+            video_path,
+            0,
+            len(original_frames) - 1
+        ):
+            # Re-encode for browser compatibility
+            final_output = os.path.join(temp_dir, "final_video.mp4")
+            if reencode_video(output_path, final_output):
+                # Display video preview
+                st.success("Video processing completed successfully!")
+                with open(final_output, "rb") as f:
+                    video_bytes = f.read()
+                    st.video(video_bytes, format="video/mp4")
+                    
+                    # Display download button
+                    st.download_button(
+                        label="Download Processed Video",
+                        data=video_bytes,
+                        file_name="processed_video.mp4",
+                        mime="video/mp4"
+                    )
+            else:
+                st.error("Failed to re-encode video for browser compatibility")
+        else:
+            st.error("Failed to create processed video")
+
+# Main application logic
 if uploaded_file is not None:
     # Show file size
     file_size = uploaded_file.size / (1024 * 1024 * 1024)  # Convert to GB
@@ -307,88 +410,7 @@ if uploaded_file is not None:
         st.write("No frames selected")
 
     if st.button("Run the AI 🚀", key="run_algorithm"):
-        if hasattr(st.session_state, 'selected_frames') and st.session_state.selected_frames:
-            with st.spinner("Initializing video processing..."):
-                # Initialize variables for video reconstruction
-                cap = cv2.VideoCapture(st.session_state.temp_file_path)
-                original_frames = []
-                while True:
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
-                    original_frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-                cap.release()
-
-                # Process all selected ranges first
-                sorted_frames = sorted(st.session_state.selected_frames)
-                ranges = []
-                current_range = [sorted_frames[0]]
-                
-                for i in range(1, len(sorted_frames)):
-                    if sorted_frames[i] == sorted_frames[i-1] + 1:
-                        current_range.append(sorted_frames[i])
-                    else:
-                        ranges.append(current_range)
-                        current_range = [sorted_frames[i]]
-                ranges.append(current_range)
-
-                # Process all ranges before creating final video
-                progress_bar = stqdm(ranges, desc="Processing frame ranges")
-                for frame_range in progress_bar:
-                    first, last = frame_range[0], frame_range[-1]
-                    progress_bar.set_description(f"Processing frames {first}-{last}")
-                    
-                    prev_frame = first - 1 if first > 1 else None
-                    next_frame = last + 1 if last < st.session_state.video_info['total_frames'] else None
-                    
-                    if prev_frame and next_frame:
-                        prev_img = extract_frames(st.session_state.temp_file_path, prev_frame-1, 1)[0]
-                        next_img = extract_frames(st.session_state.temp_file_path, next_frame-1, 1)[0]
-                        
-                        task_id = str(uuid.uuid4())
-                        
-                        if submit_task(prev_img, next_img, next_frame - prev_frame - 1, task_id):
-                            result = retrieve_result(task_id)
-                            
-                            if result and "interpolated_frames" in result:
-                                interpolated_frames = [
-                                    cv2.cvtColor(
-                                        cv2.imdecode(np.frombuffer(base64.b64decode(frame_b64), np.uint8), cv2.IMREAD_COLOR),
-                                        cv2.COLOR_BGR2RGB
-                                    )
-                                    for frame_b64 in result["interpolated_frames"]
-                                ]
-
-                                replace_start = first - 1
-                                replace_end = last - 1
-
-                                for i in range(len(interpolated_frames)):
-                                    pos = replace_start + i
-                                    if pos < len(original_frames):
-                                        original_frames[pos] = interpolated_frames[i]
-
-                # Create single final video after all replacements
-                if create_video_from_frames(
-                    original_frames,
-                    "modified_video.mp4",
-                    st.session_state.temp_file_path,
-                    0,
-                    len(original_frames) - 1
-                ):
-                    with open("modified_video.mp4", "rb") as f:
-                        video_bytes = f.read()
-                        st.video(video_bytes, format="video/mp4")
-                        
-                        st.download_button(
-                            label="Download Modified Video",
-                            data=video_bytes,
-                            file_name=f"modified_{uploaded_file.name}",
-                            mime="video/mp4"
-                        )
-                else:
-                    st.error("Video processing failed")
-        else:
-            st.warning("No frames selected!")
+        process_selected_frames(st.session_state.temp_file_path, st.session_state.selected_frames)
 else:
     # Clean up temporary file when no file is uploaded
     if st.session_state.temp_file_path and os.path.exists(st.session_state.temp_file_path):

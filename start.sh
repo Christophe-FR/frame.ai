@@ -7,7 +7,7 @@ export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
 redis-server --daemonize yes
 
 # Start the Redis worker in the background
-python redis_worker.py &
+python frame_interpolation_server.py &
 
 # Start the Streamlit app in headless mode (this will run in the foreground)
 streamlit run app.py --server.headless true 

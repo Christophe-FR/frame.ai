@@ -1,0 +1,7 @@
+redis:
+  host: "localhost"  # or "redis" if using Docker service name
+  port: 6379
+
+queues:
+  task: "frame_interpolation_tasks"
+  result: "frame_interpolation_results"
