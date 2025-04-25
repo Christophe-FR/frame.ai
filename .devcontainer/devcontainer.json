@@ -1,6 +1,6 @@
 {
     "name": "TF2 GPU DevContainer",
-    "image": "gcr.io/deeplearning-platform-release/tf2-gpu.2-12:latest",
+    "image": "gcr.io/deeplearning-platform-release/tf2-gpu.2-6:latest",
     "workspaceFolder": "/workspace",
     "mounts": [
         "source=/home/ai-workstation/frame.ai,target=/workspace,type=bind,consistency=cached"

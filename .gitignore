@@ -39,7 +39,7 @@ Thumbs.db
 *.mp4
 *.avi
 *.mov
-temp_*
+/tfhub_cache/
 
 # Image files
 *.jpg

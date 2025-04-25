@@ -3,10 +3,42 @@ import cv2
 import tensorflow as tf
 import tensorflow_hub as hub
 from typing import Dict, Any, List
-import base64
+import os
+import logging
+import os
 
-# Load FILM model (only when this module is used directly)
-model = hub.load("https://tfhub.dev/google/film/1")
+# Suppress TensorFlow logging
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 0=all, 1=no INFO, 2=no INFO/WARN, 3=no INFO/WARN/ERROR
+
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+logger.info(f"TensorFlow version: {tf.__version__}")
+logger.info(tf.config.list_physical_devices('GPU'))
+
+# Set cache directory for TensorFlow Hub (inside Docker container)
+cache_dir = os.path.join(os.getcwd(), 'tfhub_cache')
+os.environ['TFHUB_CACHE_DIR'] = cache_dir
+os.makedirs(cache_dir, exist_ok=True)
+
+# Initialize model as None
+model = None
+
+try:
+    logger.info("Loading FILM model from TensorFlow Hub...")
+    logger.info(f"Cache directory: {os.environ['TFHUB_CACHE_DIR']}")
+    
+    # Load the model with progress tracking
+    model = hub.load("https://tfhub.dev/google/film/1")
+    logger.info("FILM model loaded successfully!")
+    
+except Exception as e:
+    logger.error(f"Failed to load FILM model: {e}")
+    logger.error("Please check your internet connection and try again.")
+    logger.error(f"Cache directory: {os.environ['TFHUB_CACHE_DIR']}")
+    raise
 
 def load_frame(path: str) -> np.ndarray:
     """Load a frame from disk and convert to RGB."""
@@ -14,31 +46,6 @@ def load_frame(path: str) -> np.ndarray:
     if frame is None:
         raise FileNotFoundError(f"Could not load image: {path}")
     return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-def encode_frame_to_base64(frame_rgb: np.ndarray) -> str:
-    """Encode an RGB frame to base64.
-    
-    Args:
-        frame_rgb: RGB frame as numpy array
-        
-    Returns:
-        Base64 encoded string
-    """
-    _, buffer = cv2.imencode(".png", cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR))
-    return base64.b64encode(buffer).decode("utf-8")
-
-def decode_base64_to_frame(b64: str) -> np.ndarray:
-    """Decode a base64 string to an RGB frame.
-    
-    Args:
-        b64: Base64 encoded string
-        
-    Returns:
-        RGB frame as numpy array
-    """
-    image_data = base64.b64decode(b64)
-    image = tf.io.decode_image(image_data, channels=3)
-    return image.numpy()
 
 def normalize(frame: np.ndarray) -> np.ndarray:
     """Convert frame to float32 in [0, 1] range."""

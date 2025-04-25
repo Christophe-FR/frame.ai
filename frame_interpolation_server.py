@@ -1,82 +1,116 @@
+
 import redis
 import json
-import base64
 import numpy as np
 import cv2
-from job_manager import JobManager, JobStatus
 from utils import interpolate_frames
+from frame_codec import encode_frame_to_base64, decode_base64_to_frame
 import yaml
 import time
+import logging
+import traceback
 
-# Load configuration
-with open("config.yaml", 'r') as f:
-    config = yaml.safe_load(f)
+# Initialize logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def process_job(job_data: dict) -> dict:
-    """Process a single job."""
-    try:
-        # Decode frames
-        frame1_data = base64.b64decode(job_data['frame1'])
-        frame2_data = base64.b64decode(job_data['frame2'])
+class FrameInterpolationServer:
+    def __init__(self, config_path: str = "config.yaml"):
+        """Initialize the frame interpolation server.
         
-        frame1 = cv2.imdecode(np.frombuffer(frame1_data, dtype=np.uint8), cv2.IMREAD_COLOR)
-        frame2 = cv2.imdecode(np.frombuffer(frame2_data, dtype=np.uint8), cv2.IMREAD_COLOR)
+        Args:
+            config_path: Path to the configuration file
+        """
+        # Load configuration
+        with open(config_path, 'r') as f:
+            self.config = yaml.safe_load(f)
+            
+        # Initialize Redis connection
+        self.redis = redis.Redis(
+            host=self.config['redis']['host'],
+            port=self.config['redis']['port']
+        )
         
-        # Convert to RGB
-        frame1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2RGB)
-        frame2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2RGB)
+        # Get queue names from config
+        self.task_queue = self.config['queues']['task']
+        self.result_queue = self.config['queues']['result']
         
-        # Interpolate frames
-        num_frames = job_data.get('num_frames', 1)
-        interpolated_frames = interpolate_frames(frame1, frame2, num_frames)
+    def process_frames(self, frame1_data: str, frame2_data: str, num_frames: int = 1) -> dict:
+        """Process frames and return interpolated results.
         
-        # Encode result frames
-        result_frames = []
-        for frame in interpolated_frames:
-            _, buffer = cv2.imencode('.png', cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-            result_frames.append(base64.b64encode(buffer).decode('utf-8'))
+        Args:
+            frame1_data: Base64 encoded first frame
+            frame2_data: Base64 encoded second frame
+            num_frames: Number of frames to interpolate between the two frames
+            
+        Returns:
+            Dictionary containing either the interpolated frames or an error message
+        """
+        try:
+            logger.info("Decoding frames...")
+            # Decode frames using frame_codec
+            frame1 = decode_base64_to_frame(frame1_data)
+            frame2 = decode_base64_to_frame(frame2_data)
+            
+            logger.info("Interpolating frames...")
+            # Interpolate frames
+            interpolated_frames = interpolate_frames(frame1, frame2, num_frames)
+            
+            logger.info("Encoding result frames...")
+            # Encode result frames using frame_codec
+            result_frames = [encode_frame_to_base64(frame) for frame in interpolated_frames]
+            
+            logger.info("Processing complete!")
+            return {
+                'frames': result_frames
+            }
+            
+        except Exception as e:
+            error_msg = f"Error in process_frames: {str(e)}\n{traceback.format_exc()}"
+            logger.error(error_msg)
+            return {
+                'error': error_msg
+            }
+            
+    def run(self):
+        """Run the server in a loop, processing frames from the queue."""
+        logger.info("Frame interpolation server started.")
         
-        return {
-            'frames': result_frames
-        }
-        
-    except Exception as e:
-        return {
-            'error': str(e)
-        }
+        while True:
+            try:
+                logger.info("Waiting for job...")
+                
+                # Get next frame pair from Redis
+                data = self.redis.blpop(self.task_queue)
+                    
+                _, message = data
+                task_data = json.loads(message)
+                logger.info(f"Received task {task_data['task_id']}")
+                
+                # Process frames
+                result = self.process_frames(
+                    task_data['frame1'],
+                    task_data['frame2'],
+                    task_data.get('num_frames', 1)
+                )
+                
+                # Send result back with task_id
+                response = {
+                    'frames': result.get('frames', []),
+                    'error': result.get('error')
+                }
+                # Store result with task_id as key
+                self.redis.set(f"{self.result_queue}:{task_data['task_id']}", json.dumps(response))
+                logger.info(f"Sent result for task {task_data['task_id']}")
+                
+            except Exception as e:
+                error_msg = f"Error in server loop: {str(e)}\n{traceback.format_exc()}"
+                logger.error(error_msg)
+                time.sleep(1)
 
 def main():
-    # Initialize job manager
-    job_manager = JobManager()
-    
-    print("Frame interpolation server started. Waiting for jobs...")
-    
-    while True:
-        # Get next job
-        job = job_manager.get_next_job()
-        
-        if job is None:
-            # No jobs available, wait a bit
-            time.sleep(0.1)
-            continue
-        
-        try:
-            # Process job
-            result = process_job(job['data'])
-            
-            # Update job status
-            if 'error' in result:
-                job_manager.update_job_status(job['id'], JobStatus.FAILED, result)
-            else:
-                job_manager.update_job_status(job['id'], JobStatus.COMPLETED, result)
-                
-        except Exception as e:
-            # Update job status to failed
-            job_manager.update_job_status(
-                job['id'],
-                JobStatus.FAILED,
-                {'error': str(e)}
-            )
+    server = FrameInterpolationServer()
+    server.run()
 
 if __name__ == "__main__":
     main()
