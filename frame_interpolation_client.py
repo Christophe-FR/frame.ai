@@ -4,11 +4,10 @@ import uuid
 import yaml
 import numpy as np
 import cv2
-from typing import Dict, Any, List
+from typing import List
 from frame_codec import encode_frame_to_base64, decode_base64_to_frame
 import time
 import logging
-import traceback
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -16,21 +15,24 @@ logger = logging.getLogger(__name__)
 
 # Load configuration
 with open("config.yaml", 'r') as f:
-    config = yaml.safe_load(f)
+    cfg = yaml.safe_load(f)
 
 class FrameInterpolationClient:
     """Client for sending frame interpolation tasks to the server."""
     
-    def __init__(self, host: str = config['redis']['host'], port: int = config['redis']['port']):
+    def __init__(self, host: str = cfg['redis']['host'], port: int = cfg['redis']['port'], 
+                 task_queue: str = cfg['queues']['task'], result_queue: str = cfg['queues']['result']):
         """Initialize frame interpolation client.
         
         Args:
             host: Redis host address
             port: Redis port number
+            task_queue: Redis queue name for tasks
+            result_queue: Redis queue name for results
         """
         self.r = redis.Redis(host=host, port=port)
-        self.task_queue = config['queues']['task']
-        self.result_queue = config['queues']['result']
+        self.task_queue = task_queue
+        self.result_queue = result_queue
 
     def send_task(self, frame1: np.ndarray, frame2: np.ndarray, 
                  num_frames: int = 1) -> str:
@@ -83,6 +85,7 @@ class FrameInterpolationClient:
                 if 'error' in result and result['error']:
                     raise Exception(f"Task failed: {result['error']}")
                 if 'frames' in result and result['frames']:
+                    logger.info(f"Retrieved result {task_id}")
                     return [decode_base64_to_frame(frame_b64) for frame_b64 in result['frames']]
             time.sleep(0.1)
             
@@ -105,7 +108,7 @@ class FrameInterpolationClient:
             task_id = self.send_task(frame1, frame2, num_frames)
             return self.get_result(task_id, timeout)
         except Exception as e:
-            logger.error(f"Error in process_frames: {str(e)}\n{traceback.format_exc()}")
+            logger.error(f"Error in process_frames: {str(e)}")
             raise
 
 if __name__ == "__main__":
@@ -135,4 +138,4 @@ if __name__ == "__main__":
         print("Saved interpolated frame to test_interpolated_frame.png")
             
     except Exception as e:
-        logger.error(f"Test error: {str(e)}\n{traceback.format_exc()}") 
+        logger.error(f"Test error: {str(e)}") 

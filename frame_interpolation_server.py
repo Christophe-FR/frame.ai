@@ -1,4 +1,3 @@
-
 import redis
 import json
 import numpy as np
@@ -8,32 +7,29 @@ from frame_codec import encode_frame_to_base64, decode_base64_to_frame
 import yaml
 import time
 import logging
-import traceback
 
 # Initialize logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Load configuration
+with open("config.yaml", 'r') as f:
+    cfg = yaml.safe_load(f)
+
 class FrameInterpolationServer:
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(self, host: str = cfg['redis']['host'], port: int = cfg['redis']['port'], task_queue: str = cfg['queues']['task'], result_queue: str = cfg['queues']['result']):
         """Initialize the frame interpolation server.
         
         Args:
-            config_path: Path to the configuration file
+            host: Redis host address
+            port: Redis port number
+            task_queue: Redis queue name for tasks
+            result_queue: Redis queue name for results
         """
-        # Load configuration
-        with open(config_path, 'r') as f:
-            self.config = yaml.safe_load(f)
-            
         # Initialize Redis connection
-        self.redis = redis.Redis(
-            host=self.config['redis']['host'],
-            port=self.config['redis']['port']
-        )
-        
-        # Get queue names from config
-        self.task_queue = self.config['queues']['task']
-        self.result_queue = self.config['queues']['result']
+        self.redis = redis.Redis(host=host, port=port)
+        self.task_queue = task_queue
+        self.result_queue = result_queue
         
     def process_frames(self, frame1_data: str, frame2_data: str, num_frames: int = 1) -> dict:
         """Process frames and return interpolated results.
@@ -66,7 +62,7 @@ class FrameInterpolationServer:
             }
             
         except Exception as e:
-            error_msg = f"Error in process_frames: {str(e)}\n{traceback.format_exc()}"
+            error_msg = f"Error in process_frames: {str(e)}"
             logger.error(error_msg)
             return {
                 'error': error_msg
@@ -104,8 +100,7 @@ class FrameInterpolationServer:
                 logger.info(f"Sent result for task {task_data['task_id']}")
                 
             except Exception as e:
-                error_msg = f"Error in server loop: {str(e)}\n{traceback.format_exc()}"
-                logger.error(error_msg)
+                logger.error(f"Error in server loop: {str(e)}")
                 time.sleep(1)
 
 def main():
