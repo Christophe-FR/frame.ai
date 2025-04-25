@@ -44,7 +44,4 @@ temp_*
 # Image files
 *.jpg
 *.jpeg
-*.png
-
-# New pattern to ignore all files starting with 'frame' 
-frame* 
+*.png 
