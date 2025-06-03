@@ -1,43 +1,16 @@
 #!/bin/bash
 
-# video_process.sh - Extract, process, and rebuild video frames while preserving quality
-#
-# This script supports most common video formats:
-#
-# CONTAINER FORMATS:
-# ✓ MP4 (.mp4)    - Universal format for most devices and platforms
-# ✓ MKV (.mkv)    - Matroska container with support for multiple streams
-# ✓ MOV (.mov)    - QuickTime format common in professional video
-# ✓ WebM (.webm)  - Web-optimized format for streaming
-# ✓ AVI (.avi)    - Classic video container format
-#
-# VIDEO CODECS:
-# ✓ H.264/AVC     - Optimized encoding with profile preservation
-# ✓ H.265/HEVC    - High efficiency video coding with quality settings
-# ✓ VP9          - Open video codec for WebM
-# ✓ ProRes       - Professional production codec
-# ✓ Other codecs - Handled via generic encoding with quality preservation
-#
-# AUDIO CODECS:
-# ✓ AAC          - Advanced Audio Coding (most common)
-# ✓ MP3          - MPEG Audio Layer III
-# ✓ Other formats - Preserved from source when possible
-#
-# FEATURES:
-# ✓ Preserves metadata and chapters from original file
-# ✓ Maintains exact frame rate
-# ✓ Preserves color space and range
-# ✓ Supports HDR and 10-bit content
-# ✓ Balanced quality/size ratio
-#
-# Usage: ./video_process.sh input.mp4
+# video_process.sh - Video processing with quality preservation and frame extraction
+# Supports common formats while maintaining similar properties to the original
+# Now with automatic frame extraction for further processing
 
 set -e
 
 INPUT="$1"
 
 if [ -z "$INPUT" ]; then
-    echo "Usage: $0 input.mp4"
+    echo "Usage: $0 input_video"
+    echo "  Frames will be automatically extracted to RAM"
     exit 1
 fi
 
@@ -47,174 +20,125 @@ INPUT_EXT="${INPUT##*.}"
 OUTPUT="${INPUT_BASE}_out.${INPUT_EXT}"
 echo "Output will be saved as: $OUTPUT"
 
-mkdir -p frames
+# Create frames directory in RAM
+FRAMES_DIR="/dev/shm/${INPUT_BASE}_frames"
+mkdir -p "$FRAMES_DIR"
+echo "Frames will be extracted to RAM: $FRAMES_DIR"
+
+# Create temporary files with safer names
+TEMP_VIDEO="temp_video_$$.${INPUT_EXT}"
+TEMP_AUDIO="temp_audio_$$.aac"
+
+# Set up cleanup trap
+trap 'rm -f "$TEMP_VIDEO" "$TEMP_AUDIO"' EXIT
 
 echo "[1] Extracting video metadata..."
-# Get video frame rate and time base
-FRAMERATE=$(ffprobe -v 0 -select_streams v:0 -show_entries stream=r_frame_rate \
-    -of default=noprint_wrappers=1:nokey=1 "$INPUT" | awk -F/ '{printf "%.3f", $1/$2}')
-FRAMERATE_FRAC=$(ffprobe -v 0 -select_streams v:0 -show_entries stream=r_frame_rate \
-    -of default=noprint_wrappers=1:nokey=1 "$INPUT")
+# Get core video properties
+FRAMERATE=$(ffprobe -v 0 -select_streams v:0 -show_entries stream=r_frame_rate -of default=noprint_wrappers=1:nokey=1 "$INPUT")
+WIDTH=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$INPUT")
+HEIGHT=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$INPUT")
+VCODEC=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$INPUT")
+PIX_FMT=$(ffprobe -v error -select_streams v:0 -show_entries stream=pix_fmt -of default=noprint_wrappers=1:nokey=1 "$INPUT")
+VIDEO_BITRATE=$(ffprobe -v error -select_streams v:0 -show_entries stream=bit_rate -of default=noprint_wrappers=1:nokey=1 "$INPUT")
 
-# Get resolution
-WIDTH=$(ffprobe -v error -select_streams v:0 -show_entries stream=width \
-    -of csv=p=0 "$INPUT")
-HEIGHT=$(ffprobe -v error -select_streams v:0 -show_entries stream=height \
-    -of csv=p=0 "$INPUT")
+# Get color information
+COLOR_SPACE=$(ffprobe -v error -select_streams v:0 -show_entries stream=color_space -of default=noprint_wrappers=1:nokey=1 "$INPUT" 2>/dev/null || echo "")
+COLOR_PRIMARIES=$(ffprobe -v error -select_streams v:0 -show_entries stream=color_primaries -of default=noprint_wrappers=1:nokey=1 "$INPUT" 2>/dev/null || echo "")
+COLOR_TRANSFER=$(ffprobe -v error -select_streams v:0 -show_entries stream=color_transfer -of default=noprint_wrappers=1:nokey=1 "$INPUT" 2>/dev/null || echo "")
 
-# Get video codec details
-VCODEC=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name \
-    -of default=noprint_wrappers=1:nokey=1 "$INPUT")
-PIX_FMT=$(ffprobe -v error -select_streams v:0 -show_entries stream=pix_fmt \
-    -of default=noprint_wrappers=1:nokey=1 "$INPUT")
-PROFILE=$(ffprobe -v error -select_streams v:0 -show_entries stream=profile \
-    -of default=noprint_wrappers=1:nokey=1 "$INPUT")
-COLOR_SPACE=$(ffprobe -v error -select_streams v:0 -show_entries stream=color_space \
-    -of default=noprint_wrappers=1:nokey=1 "$INPUT")
-COLOR_RANGE=$(ffprobe -v error -select_streams v:0 -show_entries stream=color_range \
-    -of default=noprint_wrappers=1:nokey=1 "$INPUT")
+# Get audio properties
+ACODEC=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$INPUT" 2>/dev/null || echo "none")
+AUDIO_BITRATE=$(ffprobe -v error -select_streams a:0 -show_entries stream=bit_rate -of default=noprint_wrappers=1:nokey=1 "$INPUT" 2>/dev/null || echo "")
 
-# Get video bitrate
-VIDEO_BITRATE=$(ffprobe -v error -select_streams v:0 -show_entries stream=bit_rate \
-    -of default=noprint_wrappers=1:nokey=1 "$INPUT")
-
-# Get audio codec details
-ACODEC=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name \
-    -of default=noprint_wrappers=1:nokey=1 "$INPUT")
-AUDIO_BITRATE=$(ffprobe -v error -select_streams a:0 -show_entries stream=bit_rate \
-    -of default=noprint_wrappers=1:nokey=1 "$INPUT")
-
-# Check if the file has chapters
-HAS_CHAPTERS=$(ffprobe -v error -show_entries chapters -of default=noprint_wrappers=1:nokey=1 "$INPUT" | wc -l)
-
-# Get input format extension
-INPUT_EXT="${INPUT##*.}"
-OUTPUT_EXT="${OUTPUT##*.}"
-
-echo "Source video: $WIDTH×$HEIGHT, $FRAMERATE fps, codec: $VCODEC ($PROFILE), pixel format: $PIX_FMT"
+echo "Source: $WIDTH×$HEIGHT, codec: $VCODEC, pixel format: $PIX_FMT"
 echo "Video bitrate: $VIDEO_BITRATE bits/s"
 echo "Audio: $ACODEC, bitrate: $AUDIO_BITRATE bits/s"
-echo "Input format: $INPUT_EXT, Output format: $OUTPUT_EXT"
-if [ "$HAS_CHAPTERS" -gt 0 ]; then
-    echo "Chapters detected: Yes (will be preserved)"
+
+# Extract frames to RAM
+echo "[2] Extracting frames to RAM ($FRAMES_DIR)..."
+ffmpeg -i "$INPUT" -vsync 0 -q:v 1 "$FRAMES_DIR/frame_%06d.png"
+echo "Frames extracted successfully"
+
+# Simple quality detection - enhance lower quality videos more
+if [ -n "$VIDEO_BITRATE" ] && [ "$VIDEO_BITRATE" -lt 2000000 ]; then
+    BITRATE_MULT=1.2
+    echo "Lower quality source detected, enhancing bitrate by 20%"
 else
-    echo "Chapters detected: No"
+    BITRATE_MULT=1.1
+    echo "Standard quality source, enhancing bitrate by 10%"
 fi
 
-echo "[2] Extracting audio..."
-ffmpeg -y -i "$INPUT" -vn -acodec copy audio_track.aac
+echo "[3] Extracting audio..."
+if [ "$ACODEC" != "none" ]; then
+    ffmpeg -y -i "$INPUT" -vn -c:a copy "$TEMP_AUDIO"
+else
+    echo "No audio stream found, skipping audio extraction"
+fi
 
-echo "[3] Extracting frames as lossless PNG..."
-# Use qscale=0 for maximum quality
-ffmpeg -y -i "$INPUT" -qscale:v 0 -start_number 0 frames/frame_%05d.png
+echo "[4] Processing video..."
+# If no bitrate available, set reasonable defaults based on resolution
+if [ -z "$VIDEO_BITRATE" ]; then
+    if [ "$WIDTH" -ge 1920 ]; then # HD or higher
+        VIDEO_BITRATE=8000000   # 8 Mbps
+    else # SD
+        VIDEO_BITRATE=4000000   # 4 Mbps
+    fi
+fi
 
-echo "[4] *** PAUSE HERE for image processing on PNGs in ./frames ***"
-echo "Processing will be performed here"
+# Calculate target bitrate with proper rounding
+TARGET_BITRATE=$(echo "$VIDEO_BITRATE * $BITRATE_MULT" | bc | awk '{printf("%d", $1 + 0.5)}')
+echo "Targeting bitrate: $TARGET_BITRATE bits/s"
 
-echo "[5] Rebuilding video from frames..."
-# Create temp file in same format as input
-TEMP_FILE="video_no_audio.${INPUT_EXT}"
-
-# Set appropriate codec based on detected input codec
+# Process video based on codec
 case "$VCODEC" in
-    h264)
-        # H.264 encoding with balanced quality/size
-        echo "Using balanced H.264 encoding (CRF 18)"
-        ffmpeg -y -framerate "$FRAMERATE_FRAC" -i frames/frame_%05d.png \
-            -c:v libx264 -pix_fmt "$PIX_FMT" \
-            -preset medium -crf 18 \
-            -r "$FRAMERATE_FRAC" \
-            -color_primaries "${COLOR_SPACE:-bt709}" -colorspace "${COLOR_SPACE:-bt709}" \
-            -color_range "${COLOR_RANGE:-tv}" \
-            -vf "scale=${WIDTH}:${HEIGHT}" \
-            "$TEMP_FILE"
-        ;;
-    hevc)
-        # HEVC encoding with balanced quality/size
-        echo "Using balanced HEVC encoding (CRF 22)"
-        ffmpeg -y -framerate "$FRAMERATE_FRAC" -i frames/frame_%05d.png \
-            -c:v libx265 -pix_fmt "$PIX_FMT" \
-            -preset medium -crf 22 \
-            -r "$FRAMERATE_FRAC" \
-            -color_primaries "${COLOR_SPACE:-bt709}" -colorspace "${COLOR_SPACE:-bt709}" \
-            -color_range "${COLOR_RANGE:-tv}" \
-            -vf "scale=${WIDTH}:${HEIGHT}" \
-            "$TEMP_FILE"
-        ;;
-    vp9)
-        # VP9 encoding with balanced quality/size
-        echo "Using balanced VP9 encoding (CRF 30)"
-        ffmpeg -y -framerate "$FRAMERATE_FRAC" -i frames/frame_%05d.png \
-            -c:v libvpx-vp9 -pix_fmt yuv420p \
-            -crf 30 -b:v 0 \
-            -r "$FRAMERATE_FRAC" \
-            -vf "scale=${WIDTH}:${HEIGHT}" \
-            "$TEMP_FILE"
-        ;;
-    prores)
-        # ProRes encoding with profile 3 (standard)
-        echo "Using ProRes standard profile"
-        ffmpeg -y -framerate "$FRAMERATE_FRAC" -i frames/frame_%05d.png \
-            -c:v prores_ks -profile:v 3 -pix_fmt yuv422p10le \
-            -r "$FRAMERATE_FRAC" \
-            -vf "scale=${WIDTH}:${HEIGHT}" \
-            "$TEMP_FILE"
+    h264|h265|hevc)
+        # H.264/H.265 processing
+        CODEC_LIB="libx264"
+        if [[ "$VCODEC" == "hevc" || "$VCODEC" == "h265" ]]; then
+            CODEC_LIB="libx265"
+        fi
+        
+        # Add color space parameters if available
+        COLOR_OPTS=""
+        if [ -n "$COLOR_SPACE" ]; then
+            COLOR_OPTS="-colorspace $COLOR_SPACE -color_primaries $COLOR_PRIMARIES -color_trc $COLOR_TRANSFER"
+        fi
+        
+        ffmpeg -y -i "$INPUT" -an -c:v $CODEC_LIB -pix_fmt "$PIX_FMT" -preset fast \
+            -b:v $TARGET_BITRATE $COLOR_OPTS \
+            -vf "scale=${WIDTH}:${HEIGHT}" "$TEMP_VIDEO"
         ;;
     *)
-        # Generic approach with reasonable quality
-        echo "Using generic encoding for codec: $VCODEC"
-        
-        # Try to use original bitrate if available, with a slight increase for quality
-        if [ -n "$VIDEO_BITRATE" ]; then
-            # Use 1.5x the original bitrate to ensure good quality
-            TARGET_BITRATE=$(echo "scale=0; $VIDEO_BITRATE * 1.5" | bc)
-            ffmpeg -y -framerate "$FRAMERATE_FRAC" -i frames/frame_%05d.png \
-                -c:v "$VCODEC" -pix_fmt "$PIX_FMT" -b:v "$TARGET_BITRATE" \
-                -r "$FRAMERATE_FRAC" \
-                -vf "scale=${WIDTH}:${HEIGHT}" \
-                "$TEMP_FILE"
-        else
-            # If no bitrate available, use a reasonable default based on resolution
-            if [ "$WIDTH" -ge 3840 ]; then
-                # 4K content
-                TARGET_BITRATE="40M"
-            elif [ "$WIDTH" -ge 1920 ]; then 
-                # 1080p content
-                TARGET_BITRATE="15M"
-            else
-                # Lower resolution
-                TARGET_BITRATE="8M"
-            fi
-            
-            ffmpeg -y -framerate "$FRAMERATE_FRAC" -i frames/frame_%05d.png \
-                -c:v "$VCODEC" -pix_fmt "$PIX_FMT" -b:v "$TARGET_BITRATE" \
-                -r "$FRAMERATE_FRAC" \
-                -vf "scale=${WIDTH}:${HEIGHT}" \
-                "$TEMP_FILE"
-        fi
+        # Generic approach for other codecs
+        ffmpeg -y -i "$INPUT" -an -c:v "$VCODEC" -pix_fmt "$PIX_FMT" \
+            -b:v $TARGET_BITRATE -vf "scale=${WIDTH}:${HEIGHT}" "$TEMP_VIDEO"
         ;;
 esac
 
-echo "[6] Merging audio back into final video..."
-# Use the original audio bitrate if available, otherwise use a reasonable default
-if [ -n "$AUDIO_BITRATE" ]; then
-    ffmpeg -y -i "$TEMP_FILE" -i audio_track.aac -i "$INPUT" \
+echo "[5] Merging audio back into final video..."
+# Check if we have audio to merge
+if [ "$ACODEC" != "none" ] && [ -s "$TEMP_AUDIO" ]; then
+    ffmpeg -y -i "$TEMP_VIDEO" -i "$TEMP_AUDIO" -i "$INPUT" \
         -map 0:v:0 -map 1:a:0 \
         -map_metadata 2 -map_chapters 2 \
         -c:v copy -c:a "$ACODEC" -b:a "$AUDIO_BITRATE" \
         "$OUTPUT"
 else
-    # Default to 192k which is good quality for most content
-    ffmpeg -y -i "$TEMP_FILE" -i audio_track.aac -i "$INPUT" \
-        -map 0:v:0 -map 1:a:0 \
-        -map_metadata 2 -map_chapters 2 \
-        -c:v copy -c:a "$ACODEC" -b:a 192k \
+    # No audio, just copy the video
+    ffmpeg -y -i "$TEMP_VIDEO" -i "$INPUT" \
+        -map 0:v:0 \
+        -map_metadata 1 -map_chapters 1 \
+        -c:v copy \
         "$OUTPUT"
 fi
 
-# Clean up temporary files
-echo "[7] Cleaning up temporary files..."
-rm -f audio_track.aac "$TEMP_FILE"
-
 echo "✅ Done! Output saved to: $OUTPUT"
+echo ""
+echo "Original bitrate: $VIDEO_BITRATE bits/s"
+echo "Target bitrate: $TARGET_BITRATE bits/s (${BITRATE_MULT}x)"
+
+# Count frames and provide info
+FRAME_COUNT=$(ls -1 "$FRAMES_DIR" | wc -l)
+echo ""
+echo "Extracted $FRAME_COUNT frames to RAM: $FRAMES_DIR"
 
