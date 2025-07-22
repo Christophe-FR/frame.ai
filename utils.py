@@ -1,17 +1,27 @@
 import numpy as np
 import cv2
+import os
+import logging
+import subprocess
+import glob
+
 import tensorflow as tf
 import tensorflow_hub as hub
 from typing import Dict, Any, List, Tuple
-import os
-import logging
-import os
-import subprocess
-import glob
 import json
 
 # Suppress TensorFlow logging
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 0=all, 1=no INFO, 2=no INFO/WARN, 3=no INFO/WARN/ERROR
+
+# Configure GPU memory growth to prevent memory issues
+
+gpus = tf.config.experimental.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+    except RuntimeError as e:
+        print(e)
 
 
 # Set up logging
@@ -28,21 +38,16 @@ os.makedirs(cache_dir, exist_ok=True)
 
 # Initialize model as None
 model = None
-'''
-try:
-    logger.info("Loading FILM model from TensorFlow Hub...")
-    logger.info(f"Cache directory: {os.environ['TFHUB_CACHE_DIR']}")
+
+
+logger.info("Loading FILM model from TensorFlow Hub...")
+logger.info(f"Cache directory: {os.environ['TFHUB_CACHE_DIR']}")
+
+# Load the model with progress tracking
+model = hub.load("https://tfhub.dev/google/film/1")
+logger.info("FILM model loaded successfully!")
     
-    # Load the model with progress tracking
-    model = hub.load("https://tfhub.dev/google/film/1")
-    logger.info("FILM model loaded successfully!")
-    
-except Exception as e:
-    logger.error(f"Failed to load FILM model: {e}")
-    logger.error("Please check your internet connection and try again.")
-    logger.error(f"Cache directory: {os.environ['TFHUB_CACHE_DIR']}")
-    raise
-'''
+
 def load_frame(path: str) -> np.ndarray:
     """Load a frame from disk and convert to RGB."""
     frame = cv2.imread(path)
@@ -135,27 +140,49 @@ def interpolate_frames(frame1: np.ndarray, frame2: np.ndarray, num_frames: int =
     
     return restored_frames
 
-def save_frames(frames: List[np.ndarray], prefix: str = "interpolated") -> List[str]:
-    """Save frames to disk."""
+def save_frames(frames: List[np.ndarray], filenames: List[str], root_folder: str = "", extension: str = "") -> List[str]:
+    """Save frames to disk with custom filenames and paths."""
+    if len(frames) > len(filenames):
+        raise ValueError(f"Not enough filenames: {len(frames)} frames but only {len(filenames)} filenames provided")
+    
     saved_paths = []
     for i, frame in enumerate(frames):
-        path = f"{prefix}_frame_{i+1}.png"
+        filename = filenames[i]
+        if extension and not filename.endswith(extension):
+            filename += extension
+        
+        if root_folder:
+            path = os.path.join(root_folder, filename)
+            os.makedirs(root_folder, exist_ok=True)
+        else:
+            path = filename
+            
         cv2.imwrite(path, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
         saved_paths.append(path)
     return saved_paths
+
+def interpolate_frames_from_files(frame1_path: str, frame2_path: str, output_path: List[str]):
+    """Interpolate frames using FILM model."""
+    num_frames = len(output_path)
+    frame1 = load_frame(frame1_path)
+    frame2 = load_frame(frame2_path)
+    frames = interpolate_frames(frame1, frame2, num_frames)
+    save_frames(frames, output_path)
 
 def extract_video_frames(video_path: str, repo_path: str) -> None:
     """Extract frames from video."""
     output_pattern = os.path.join(repo_path, "frame_%06d.jpg")
     subprocess.run(['ffmpeg', '-i', video_path, '-q:v', '1', '-y', output_pattern], capture_output=True, check=True)
 
-def extract_video_audio(video_path: str, repo_path: str, sample_rate: str = None) -> None:
-    """Extract audio from video, optionally at a given sample rate."""
+def extract_video_audio(video_path: str, repo_path: str) -> None:
+    """Extract audio from video with original sample rate."""
     audio_path = os.path.join(repo_path, "audio.wav")
-    cmd = ['ffmpeg', '-i', video_path, '-vn', '-acodec', 'pcm_s16le']
-    if sample_rate:
-        cmd.extend(['-ar', str(sample_rate)])
-    cmd.extend(['-ac', '2', '-y', audio_path])
+    
+    # Get original sample rate from video
+    sample_rate_cmd = ['ffprobe', '-v', 'error', '-select_streams', 'a:0', '-show_entries', 'stream=sample_rate', '-of', 'csv=p=0', video_path]
+    sample_rate = subprocess.run(sample_rate_cmd, capture_output=True, check=True, text=True).stdout.strip()
+    
+    cmd = ['ffmpeg', '-i', video_path, '-vn', '-acodec', 'pcm_s16le', '-ar', sample_rate, '-ac', '2', '-y', audio_path]
     subprocess.run(cmd, capture_output=True, check=True)
 
 def extract_video_metadata(video_path: str, repo_path: str) -> None:
@@ -198,14 +225,22 @@ def decompose_video(video_path: str, repo_path: str) -> None:
         raise FileNotFoundError(f"Video not found: {video_path}")
     os.makedirs(repo_path, exist_ok=True)
     extract_video_metadata(video_path, repo_path)
-    # Read sample rate from metadata
-    import json
-    metadata_path = os.path.join(repo_path, "video_info.json")
-    with open(metadata_path, 'r') as f:
-        metadata = json.load(f)
-    sample_rate = metadata.get('audio', {}).get('sample_rate', None)
-    extract_video_audio(video_path, repo_path, sample_rate)
+    extract_video_audio(video_path, repo_path)
     extract_video_frames(video_path, repo_path)
+
+def interpolate_frames_from_indices(repo_path: str, start_index: int, stop_index: int):
+    """Interpolate frames between two indices in a repo."""
+    # Generate frame paths
+    frame1_path = os.path.join(repo_path, f"frame_{start_index:06d}.jpg")
+    frame2_path = os.path.join(repo_path, f"frame_{stop_index:06d}.jpg")
+    
+    # Generate output paths for intermediate frames
+    output_path = []
+    for i in range(start_index + 1, stop_index):
+        output_path.append(os.path.join(repo_path, f"frame_{i:06d}.jpg"))
+    
+    # Run interpolation
+    interpolate_frames_from_files(frame1_path, frame2_path, output_path)
 
 def recompose_video(repo_path: str, output_video_path: str) -> None:
     """Recompose video using original metadata."""
@@ -261,25 +296,96 @@ def recompose_video(repo_path: str, output_video_path: str) -> None:
     
     subprocess.run(cmd, capture_output=True, check=True)
 
+def copy_frame(repo_path: str, source_index: int, target_index: int) -> None:
+    """Copy a frame from source_index to target_index in a repo.
+    
+    Args:
+        repo_path: Path to the frame repository
+        source_index: Source frame index to copy from
+        target_index: Target frame index to copy to
+    """
+    source_path = os.path.join(repo_path, f"frame_{source_index:06d}.jpg")
+    target_path = os.path.join(repo_path, f"frame_{target_index:06d}.jpg")
+    
+    if not os.path.exists(source_path):
+        raise FileNotFoundError(f"Source frame not found: {source_path}")
+    
+    # Copy the file
+    import shutil
+    shutil.copy2(source_path, target_path)
+    print(f"Copied frame_{source_index:06d}.jpg to frame_{target_index:06d}.jpg")
+
+def get_frames_indices(repo_path: str) -> List[int]:
+    """Get all frames indices from a repo."""
+    frame_pattern = os.path.join(repo_path, "frame_*.jpg")
+    frames = glob.glob(frame_pattern)
+    return [float(frame.split("_")[-1].split(".")[0]) for frame in frames]
+
+
 if __name__ == "__main__":
     # Example: local test of interpolation pipeline
     #Decompose video to frames
-    video_path = "bromo.MOV"
+    video_path = "FilmLong-VersionFinale.mp4"
+    output_video_path = "output_video.mp4"
     repo_path = "frames"
     decompose_video(video_path, repo_path)
     
-    #Recompose video from frames
-    output_video_path = "output_video.MOV"
-    recompose_video(repo_path, output_video_path)
+    defects = [
+        16101,16103,16106,16598,16600,16602,16605,16607,16609,16611,16615,
+        16617,16619,16622,16646,16648,16651,16653,16686,16689,16725,16727,
+        16740,16742,16762,16764,16766,16785,16787,16789,16957,16959,17065,
+        17067,17100,17448,17450,17454,17848,17850,17854,17861,17865,
+        17869,17874,17878,17882,17886,17893,17897,17901,
+        17905,17909,17913,17916,17920,17924,17928,17958,17960,17964,17968,
+        17971,17975,17979,17983,17987,17998,18000,18004,18008,18012,18016,
+        18020,18023,18027,18074,18077,18094,18096,18100,18259,18270,18272,
+        18276,18280,18284,18288,18292,18295,18299,18215,18315,18317,18321,18325,
+        18329,18338,18341,18353,18355,18359,18361,18365,18369,18372,
+        18376,18380,18384,18388,18392,18485,18487,18491,18503,18506,18509,
+        18574,18578,18581,18700,18702,18711,18715,18719,18723,19146,19148,
+        19186,19188,19382,19384,19405,19407,19447,19449,19535,19537,19593,
+        19595,19689,19691,19790,19792,20255,20257,20334,20336,20536,20538,20717,20719,
+        20934,20937,21199,21201,21313,21315,21319,21339,21341,21362,21364,
+        21368,21372,21399,21401,21425,21427,21431,21435,21456,21462,21611,21613,21985,21987,
+        24737,24739,24752,24755,24757,24880,24882,24889,24894,24899,24901,
+        25222,25225,25360,25364,25373,25389,25423,25806,
+        25827,25829,25849,25851,25853,25804
+    ]
+    for defect in defects:
+        interpolate_frames_from_indices(repo_path, defect-1, defect+1)
+
+    #interpolate_frames_from_indices(repo_path, 3774-1, 3783+1)
+    interpolate_frames_from_indices(repo_path, 17097-1, 17098+1)
+    interpolate_frames_from_indices(repo_path, 17889-1, 17890+1)
+    interpolate_frames_from_indices(repo_path, 18332-1, 18333+1)
+    interpolate_frames_from_indices(repo_path, 18706-1, 18707+1)
+    interpolate_frames_from_indices(repo_path, 17857-1, 17858+1)
+    interpolate_frames_from_indices(repo_path, 25367-1, 25368+1)
+    interpolate_frames_from_indices(repo_path, 25376-1, 25377+1)
+    interpolate_frames_from_indices(repo_path, 25395-1, 25396+1)
+
+    # Copy frame 16262 to frame 16263
+    copy_frame(repo_path, 16262, 16263)
+    # Copy frame 12169 to frame 12170
+    copy_frame(repo_path, 12169, 12170)
 
     # Load frames using the new function
-    frame1 = load_frame("frame_17848.jpg")
-    frame2 = load_frame("frame_17850.jpg")
+    #frame1 = load_frame("frame_17848.jpg")
+    #frame2 = load_frame("frame_17850.jpg")
 
     # Run interpolation
     #print("Running local test interpolation...")
     #frames = interpolate_frames(frame1, frame2, num_frames=2)
-
+    #saved = save_frames(frames, filenames=["frame_17849-1.jpg", "frame_17849-2.jpg"])
     # Save to disk
-    #saved = save_frames(frames, prefix="test_output")
     #print("Saved interpolated frames:", saved)
+
+    #interpolate_frames_from_files("frames/frame_000081.jpg", "frames/frame_000083.jpg", ["frames/frame_000082.jpg"])
+    #interpolate_frames_from_files("frames/frame_000083.jpg", "frames/frame_000085.jpg", ["frames/frame_000084.jpg"])
+ 
+    #interpolate_frames_from_indices(repo_path, 81, 85)
+
+    #Recompose video from frames
+    recompose_video(repo_path, output_video_path)
+    
+    print("Done")
