@@ -7,7 +7,7 @@ import glob
 
 import tensorflow as tf
 import tensorflow_hub as hub
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Union
 import json
 
 # Suppress TensorFlow logging
@@ -102,6 +102,39 @@ def restore_frame_size(frame: np.ndarray, original_shape: tuple) -> np.ndarray:
     """
     return cv2.resize(frame, original_shape, interpolation=cv2.INTER_LANCZOS4)
 
+def interpolate_frames_at_times(frame1: np.ndarray, frame2: np.ndarray, times: List[float]) -> List[np.ndarray]:
+    """Interpolate frames at specific times between two frames using FILM model.
+    
+    Args:
+        frame1: First frame
+        frame2: Second frame
+        times: List of interpolation times (0.0 = frame1, 1.0 = frame2)
+
+    Returns:
+        List of interpolated frames as numpy arrays (RGB uint8)
+    """
+    # Resize frames if needed
+    frame1_resized, original_shape = resize_frame(frame1)
+    frame2_resized, _ = resize_frame(frame2)
+    
+    # Normalize frames
+    frame1_norm = normalize(frame1_resized)
+    frame2_norm = normalize(frame2_resized)
+    
+    interpolated = []
+    
+    for time_val in times:
+        input_dict = {
+            "time": np.array([[time_val]], dtype=np.float32),
+            "x0": np.expand_dims(frame1_norm, axis=0),
+            "x1": np.expand_dims(frame2_norm, axis=0),
+        }
+        result = model(input_dict)
+        interpolated_frame = result["image"][0].numpy()
+        interpolated.append(restore_frame_size(denormalize(interpolated_frame), original_shape))
+    
+    return interpolated
+
 def interpolate_frames(frame1: np.ndarray, frame2: np.ndarray, num_frames: int = 1) -> List[np.ndarray]:
     """Interpolate frames using FILM model.
 
@@ -113,32 +146,11 @@ def interpolate_frames(frame1: np.ndarray, frame2: np.ndarray, num_frames: int =
     Returns:
         List of interpolated frames as numpy arrays (RGB uint8)
     """
-    # Resize frames if needed
-    frame1_resized, original_shape = resize_frame(frame1)
-    frame2_resized, _ = resize_frame(frame2)
+    # Calculate evenly spaced times
+    times = [i / (num_frames + 1) for i in range(1, num_frames + 1)]
     
-    interpolated = []
-    frame1_norm = normalize(frame1_resized)
-    frame2_norm = normalize(frame2_resized)
-
-    for i in range(1, num_frames + 1):
-        time = i / (num_frames + 1)
-        input_dict = {
-            "time": np.array([[time]], dtype=np.float32),
-            "x0": np.expand_dims(frame1_norm, axis=0),
-            "x1": np.expand_dims(frame2_norm, axis=0),
-        }
-        result = model(input_dict)
-        interpolated_frame = result["image"][0].numpy()
-        interpolated.append(denormalize(interpolated_frame))
-    
-    # Restore original size for all frames
-    restored_frames = []
-    for frame in interpolated:
-        restored = restore_frame_size(frame, original_shape)
-        restored_frames.append(restored)
-    
-    return restored_frames
+    # Use interpolate_frames_at_times to do the actual work
+    return interpolate_frames_at_times(frame1, frame2, times)
 
 def save_frames(frames: List[np.ndarray], filenames: List[str], root_folder: str = "", extension: str = "") -> List[str]:
     """Save frames to disk with custom filenames and paths."""
@@ -160,14 +172,6 @@ def save_frames(frames: List[np.ndarray], filenames: List[str], root_folder: str
         cv2.imwrite(path, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
         saved_paths.append(path)
     return saved_paths
-
-def interpolate_frames_from_files(frame1_path: str, frame2_path: str, output_path: List[str]):
-    """Interpolate frames using FILM model."""
-    num_frames = len(output_path)
-    frame1 = load_frame(frame1_path)
-    frame2 = load_frame(frame2_path)
-    frames = interpolate_frames(frame1, frame2, num_frames)
-    save_frames(frames, output_path)
 
 def extract_video_frames(video_path: str, repo_path: str) -> None:
     """Extract frames from video."""
@@ -228,20 +232,6 @@ def decompose_video(video_path: str, repo_path: str) -> None:
     extract_video_audio(video_path, repo_path)
     extract_video_frames(video_path, repo_path)
 
-def interpolate_frames_from_indices(repo_path: str, start_index: int, stop_index: int):
-    """Interpolate frames between two indices in a repo."""
-    # Generate frame paths
-    frame1_path = os.path.join(repo_path, f"frame_{start_index:06d}.jpg")
-    frame2_path = os.path.join(repo_path, f"frame_{stop_index:06d}.jpg")
-    
-    # Generate output paths for intermediate frames
-    output_path = []
-    for i in range(start_index + 1, stop_index):
-        output_path.append(os.path.join(repo_path, f"frame_{i:06d}.jpg"))
-    
-    # Run interpolation
-    interpolate_frames_from_files(frame1_path, frame2_path, output_path)
-
 def recompose_video(repo_path: str, output_video_path: str) -> None:
     """Recompose video using original metadata."""
     if not os.path.exists(repo_path):
@@ -281,6 +271,7 @@ def recompose_video(repo_path: str, output_video_path: str) -> None:
         os.makedirs(output_dir, exist_ok=True)
     
     # Build ffmpeg command with original parameters
+    # Use pattern that includes all frames (original and interpolated)
     cmd = ['ffmpeg', '-framerate', fps, '-i', os.path.join(repo_path, "frame_%06d.jpg")]
     
     if has_audio:
@@ -296,7 +287,86 @@ def recompose_video(repo_path: str, output_video_path: str) -> None:
     
     subprocess.run(cmd, capture_output=True, check=True)
 
-def copy_frame(repo_path: str, source_index: int, target_index: int) -> None:
+def schedule_interpolate_video(repo_path: str, targets: List[int]):
+    frame_pattern = os.path.join(repo_path, "frame_*.jpg")
+    frames = glob.glob(frame_pattern)
+    anchors = []
+    for frame in frames:
+        # Extract the frame number part (everything between "frame_" and ".jpg")
+        frame_name = os.path.basename(frame)
+        if frame_name.startswith("frame_") and frame_name.endswith(".jpg"):
+            frame_number_str = frame_name[6:-4]  # Remove "frame_" and ".jpg"
+            try:
+                frame_number = int(frame_number_str)
+                anchors.append(frame_number)
+            except ValueError:
+                print(f"Warning: Could not parse frame number from {frame_name}")
+    
+    anchors = set(anchors)
+    targets = set(targets)
+    ineligible = anchors & targets
+    available = anchors - ineligible
+    age = {a: 0 for a in anchors}
+    age_counter = 1
+    result = []
+
+    points = set(available)
+
+    while targets:
+        made_progress = False
+        sorted_points = sorted(points)
+
+        for i in range(len(sorted_points) - 1):
+            a, b = sorted_points[i], sorted_points[i + 1]
+            between = [t for t in targets if a < t < b]
+            if not between:
+                continue
+
+            mid = (a + b) / 2
+
+            def score(t):
+                dist = abs(t - mid)
+                bias = abs(t - a) if age[a] <= age[b] else abs(t - b)
+                return (dist, bias)
+
+            t = min(between, key=score)
+            result.append((t, a, b))
+            targets.remove(t)
+            points.add(t)
+            age[t] = age_counter
+            age_counter += 1
+            if t in ineligible:
+                ineligible.remove(t)
+            made_progress = True
+            break  # Do one per iteration to preserve priority
+
+        if not made_progress:
+            raise RuntimeError("Unable to compute all targets. Some may not be between usable anchors.")
+
+    return result
+
+def interpolate_frames_video(repo_path: str, targets: List[int]):
+    schedule = schedule_interpolate_video(repo_path, targets)
+    for target, a, b in schedule:
+        # Handle frame indices for both input and output
+        # Use 6-digit format to match actual frame names: frame_000081.jpg
+        frame1_path = os.path.join(repo_path, f"frame_{int(a):06d}.jpg")
+        frame2_path = os.path.join(repo_path, f"frame_{int(b):06d}.jpg")
+        
+        # Calculate time for interpolation
+        time = (target - a) / (b - a)
+        print(f"Interpolating frame {target:.3f} between {a:.3f} and {b:.3f} at time t={time:.3f}")
+        
+        # Load frames and interpolate
+        frame1 = load_frame(frame1_path)
+        frame2 = load_frame(frame2_path)
+        frames = interpolate_frames_at_times(frame1, frame2, [time])
+        
+        # Save interpolated frames
+        output_path = os.path.join(repo_path, f"frame_{target:06d}.jpg")
+        save_frames(frames, [output_path])
+
+def replace_frame_video(repo_path: str, source: int, target: int) -> None:
     """Copy a frame from source_index to target_index in a repo.
     
     Args:
@@ -304,8 +374,8 @@ def copy_frame(repo_path: str, source_index: int, target_index: int) -> None:
         source_index: Source frame index to copy from
         target_index: Target frame index to copy to
     """
-    source_path = os.path.join(repo_path, f"frame_{source_index:06d}.jpg")
-    target_path = os.path.join(repo_path, f"frame_{target_index:06d}.jpg")
+    source_path = os.path.join(repo_path, f"frame_{source:06d}.jpg")
+    target_path = os.path.join(repo_path, f"frame_{target:06d}.jpg")
     
     if not os.path.exists(source_path):
         raise FileNotFoundError(f"Source frame not found: {source_path}")
@@ -313,23 +383,18 @@ def copy_frame(repo_path: str, source_index: int, target_index: int) -> None:
     # Copy the file
     import shutil
     shutil.copy2(source_path, target_path)
-    print(f"Copied frame_{source_index:06d}.jpg to frame_{target_index:06d}.jpg")
-
-def get_frames_indices(repo_path: str) -> List[int]:
-    """Get all frames indices from a repo."""
-    frame_pattern = os.path.join(repo_path, "frame_*.jpg")
-    frames = glob.glob(frame_pattern)
-    return [float(frame.split("_")[-1].split(".")[0]) for frame in frames]
+    print(f"Replaced frame_{source:06d}.jpg to frame_{target:06d}.jpg")
 
 
 if __name__ == "__main__":
     # Example: local test of interpolation pipeline
     #Decompose video to frames
-    video_path = "FilmLong-VersionFinale.mp4"
+    video_path = "wedding.mp4"
     output_video_path = "output_video.mp4"
     repo_path = "frames"
+
     decompose_video(video_path, repo_path)
-    
+    """
     defects = [
         16101,16103,16106,16598,16600,16602,16605,16607,16609,16611,16615,
         16617,16619,16622,16646,16648,16651,16653,16686,16689,16725,16727,
@@ -368,23 +433,22 @@ if __name__ == "__main__":
     copy_frame(repo_path, 16262, 16263)
     # Copy frame 12169 to frame 12170
     copy_frame(repo_path, 12169, 12170)
-
+    """
     # Load frames using the new function
     #frame1 = load_frame("frame_17848.jpg")
     #frame2 = load_frame("frame_17850.jpg")
 
-    # Run interpolation
-    #print("Running local test interpolation...")
-    #frames = interpolate_frames(frame1, frame2, num_frames=2)
+    #frames = interpolate_frames(frame1, frame2, 2)
+
+    # Save results
     #saved = save_frames(frames, filenames=["frame_17849-1.jpg", "frame_17849-2.jpg"])
-    # Save to disk
-    #print("Saved interpolated frames:", saved)
+    #print(f"Saved interpolated frames: {saved}")
 
     #interpolate_frames_from_files("frames/frame_000081.jpg", "frames/frame_000083.jpg", ["frames/frame_000082.jpg"])
     #interpolate_frames_from_files("frames/frame_000083.jpg", "frames/frame_000085.jpg", ["frames/frame_000084.jpg"])
  
     #interpolate_frames_from_indices(repo_path, 81, 85)
-
+    interpolate_frames_video(repo_path, list(range(40,60)))
     #Recompose video from frames
     recompose_video(repo_path, output_video_path)
     
