@@ -177,6 +177,9 @@ def extract_video_frames(video_path: str, repo_path: str) -> None:
     """Extract frames from video."""
     output_pattern = os.path.join(repo_path, "frame_%06d.jpg")
     subprocess.run(['ffmpeg', '-i', video_path, '-q:v', '1', '-y', output_pattern], capture_output=True, check=True)
+    for frame_path in glob.glob(os.path.join(repo_path, "frame_*.jpg")):
+        if '.' not in os.path.basename(frame_path)[6:-4]:
+            os.rename(frame_path, frame_path.replace('.jpg', '.000.jpg'))
 
 def extract_video_audio(video_path: str, repo_path: str) -> None:
     """Extract audio from video with original sample rate."""
@@ -238,7 +241,8 @@ def recompose_video(repo_path: str, output_video_path: str) -> None:
         raise FileNotFoundError(f"Repo not found: {repo_path}")
     
     frame_pattern = os.path.join(repo_path, "frame_*.jpg")
-    if not glob.glob(frame_pattern):
+    frames = glob.glob(frame_pattern)
+    if not frames:
         raise FileNotFoundError(f"No frames in {repo_path}")
     
     # Load metadata
@@ -270,24 +274,26 @@ def recompose_video(repo_path: str, output_video_path: str) -> None:
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
     
-    # Build ffmpeg command with original parameters
-    # Use pattern that includes all frames (original and interpolated)
-    cmd = ['ffmpeg', '-framerate', fps, '-i', os.path.join(repo_path, "frame_%06d.jpg")]
+    # Sort frames and create file list
+    frames.sort(key=lambda x: float(os.path.basename(x)[6:-8]))
+    file_list = os.path.join(repo_path, "frames_list.txt")
+    with open(file_list, 'w') as f:
+        for frame in frames:
+            f.write(f"file '{os.path.abspath(frame)}'\n")
     
+    # Build ffmpeg command
+    cmd = ['ffmpeg', '-f', 'concat', '-safe', '0', '-i', file_list]
     if has_audio:
         cmd.extend(['-i', audio_path])
-    
-    # Video encoding settings
-    cmd.extend([
-        '-c:v', codec,
-        '-pix_fmt', pix_fmt,
-        '-vf', f'scale={width}:{height}',
-        '-y', output_video_path
-    ])
+    cmd.extend(['-framerate', fps, '-c:v', codec, '-pix_fmt', pix_fmt, '-vf', f'scale={width}:{height}'])
+    if has_audio:
+        cmd.extend(['-c:a', 'aac', '-shortest'])
+    cmd.extend(['-y', output_video_path])
     
     subprocess.run(cmd, capture_output=True, check=True)
+    #os.remove(file_list)
 
-def schedule_interpolate_video(repo_path: str, targets: List[int]):
+def schedule_interpolate_video(repo_path: str, targets: List[float]):
     frame_pattern = os.path.join(repo_path, "frame_*.jpg")
     frames = glob.glob(frame_pattern)
     anchors = []
@@ -297,7 +303,7 @@ def schedule_interpolate_video(repo_path: str, targets: List[int]):
         if frame_name.startswith("frame_") and frame_name.endswith(".jpg"):
             frame_number_str = frame_name[6:-4]  # Remove "frame_" and ".jpg"
             try:
-                frame_number = int(frame_number_str)
+                frame_number = float(frame_number_str)
                 anchors.append(frame_number)
             except ValueError:
                 print(f"Warning: Could not parse frame number from {frame_name}")
@@ -345,13 +351,13 @@ def schedule_interpolate_video(repo_path: str, targets: List[int]):
 
     return result
 
-def interpolate_frames_video(repo_path: str, targets: List[int]):
+def interpolate_frames_video(repo_path: str, targets: List[float]):
     schedule = schedule_interpolate_video(repo_path, targets)
     for target, a, b in schedule:
         # Handle frame indices for both input and output
-        # Use 6-digit format to match actual frame names: frame_000081.jpg
-        frame1_path = os.path.join(repo_path, f"frame_{int(a):06d}.jpg")
-        frame2_path = os.path.join(repo_path, f"frame_{int(b):06d}.jpg")
+        # Use format to match actual frame names: frame_XXXXXX.000.jpg
+        frame1_path = os.path.join(repo_path, f"frame_{a:010.3f}.jpg")
+        frame2_path = os.path.join(repo_path, f"frame_{b:010.3f}.jpg")
         
         # Calculate time for interpolation
         time = (target - a) / (b - a)
@@ -363,7 +369,7 @@ def interpolate_frames_video(repo_path: str, targets: List[int]):
         frames = interpolate_frames_at_times(frame1, frame2, [time])
         
         # Save interpolated frames
-        output_path = os.path.join(repo_path, f"frame_{target:06d}.jpg")
+        output_path = os.path.join(repo_path, f"frame_{target:010.3f}.jpg")
         save_frames(frames, [output_path])
 
 def replace_frame_video(repo_path: str, source: int, target: int) -> None:
@@ -384,6 +390,7 @@ def replace_frame_video(repo_path: str, source: int, target: int) -> None:
     import shutil
     shutil.copy2(source_path, target_path)
     print(f"Replaced frame_{source:06d}.jpg to frame_{target:06d}.jpg")
+
 
 
 if __name__ == "__main__":
@@ -448,7 +455,8 @@ if __name__ == "__main__":
     #interpolate_frames_from_files("frames/frame_000083.jpg", "frames/frame_000085.jpg", ["frames/frame_000084.jpg"])
  
     #interpolate_frames_from_indices(repo_path, 81, 85)
-    interpolate_frames_video(repo_path, list(range(40,60)))
+    
+    interpolate_frames_video(repo_path, [float(i)+0.5 for i in range(40,60)])
     #Recompose video from frames
     recompose_video(repo_path, output_video_path)
     
