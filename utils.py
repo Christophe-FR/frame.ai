@@ -372,7 +372,7 @@ def interpolate_frames_video(repo_path: str, targets: List[float]):
         output_path = os.path.join(repo_path, f"frame_{target:010.3f}.jpg")
         save_frames(frames, [output_path])
 
-def replace_frame_video(repo_path: str, source: int, target: int) -> None:
+def copy_frame_video(repo_path: str, source: float, target: float) -> None:
     """Copy a frame from source_index to target_index in a repo.
     
     Args:
@@ -380,8 +380,8 @@ def replace_frame_video(repo_path: str, source: int, target: int) -> None:
         source_index: Source frame index to copy from
         target_index: Target frame index to copy to
     """
-    source_path = os.path.join(repo_path, f"frame_{source:06d}.jpg")
-    target_path = os.path.join(repo_path, f"frame_{target:06d}.jpg")
+    source_path = os.path.join(repo_path, f"frame_{source:010.3f}.jpg")
+    target_path = os.path.join(repo_path, f"frame_{target:010.3f}.jpg")
     
     if not os.path.exists(source_path):
         raise FileNotFoundError(f"Source frame not found: {source_path}")
@@ -389,7 +389,7 @@ def replace_frame_video(repo_path: str, source: int, target: int) -> None:
     # Copy the file
     import shutil
     shutil.copy2(source_path, target_path)
-    print(f"Replaced frame_{source:06d}.jpg to frame_{target:06d}.jpg")
+    print(f"Copied frame_{source:010.3f}.jpg to frame_{target:010.3f}.jpg")
 
 
 
@@ -457,6 +457,9 @@ if __name__ == "__main__":
     #interpolate_frames_from_indices(repo_path, 81, 85)
     
     interpolate_frames_video(repo_path, [float(i)+0.5 for i in range(40,60)])
+
+    copy_frame_video(repo_path, 110, 108.5)
+
     #Recompose video from frames
     recompose_video(repo_path, output_video_path)
     
