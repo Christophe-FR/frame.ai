@@ -1,65 +1,83 @@
-# Remove this Flash ⚡🎥
+# Frames Viewer
 
-An AI-powered tool to remove flashes from videos by replacing individual frames with interpolated frames.
+A simple React frontend for viewing frames from a folder with dynamic updates.
 
 ## Features
-- Upload and preview videos
-- Select frames affected by flashes
-- Replace selected frames with AI-interpolated frames
-- Download the modified video
 
-## Prerequisites
-- Python 3.8+
-- Redis server (for worker communication)
-- FFmpeg (for video processing)
+- 📁 **Dynamic Updates**: Automatically refreshes when new frames are added
+- 📄 **Multi-page View**: Paginated display of frames
+- 🖼️ **Grid Layout**: Responsive grid layout for frame display
+- 🔄 **Real-time**: Polls for updates every 2 seconds
+- 📱 **Mobile Friendly**: Responsive design
 
-## Installation
+## Setup
 
-1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd <repository-directory>
-   ```
+### 1. Install Dependencies
 
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+**Backend (Python):**
+```bash
+pip install -r requirements.txt
+```
+
+**Frontend (Node.js):**
+```bash
+npm install
+```
+
+### 2. Configure Frames Folder
+
+Edit `server.py` and change the `FRAMES_FOLDER` variable to point to your frames directory:
+
+```python
+FRAMES_FOLDER = "frames"  # Change this to your frames folder path
+```
+
+### 3. Run the Application
+
+**Start the Flask backend:**
+```bash
+python server.py
+```
+
+**Start the React frontend (in a new terminal):**
+```bash
+npm start
+```
+
+The application will be available at:
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:5000
 
 ## Usage
 
-### 1. Start the Redis Server
-The worker relies on Redis for task queuing. Ensure Redis is running before starting the worker or the app:
-   ```bash
-   redis-server
-   ```
+1. **View Frames**: The app automatically displays all image files from your frames folder
+2. **Navigate**: Use the pagination controls to browse through frames
+3. **Real-time Updates**: New frames will appear automatically when added to the folder
+4. **Responsive**: Works on desktop and mobile devices
 
-### 2. Start the Worker
-Run the worker script to process frame interpolation tasks:
-   ```bash
-   python worker.py
-   ```
+## API Endpoints
 
-### 3. Run the App
-Start the Streamlit app to upload and process videos:
-   ```bash
-   streamlit run app.py
-   ```
+- `GET /api/frames` - Get list of all frames
+- `GET /api/frames/<filename>` - Serve individual frame image
+- `GET /api/health` - Health check endpoint
 
-### 4. Use the App
-1. Upload a video file (MP4, AVI, or MOV).
-2. Navigate through frames and select those affected by flashes.
-3. Click **Run the AI 🚀** to replace the selected frames.
-4. Preview and download the modified video.
+## Supported Image Formats
 
-## Configuration
-- **Redis Host/Port**: Modify `REDIS_HOST` and `REDIS_PORT` in `app.py` if Redis is not running locally.
-- **Video Size Limit**: The app supports videos up to 4GB.
+- JPG/JPEG
+- PNG
+- BMP
+- TIFF
+
+## Development
+
+The React app polls the backend every 2 seconds for updates. You can modify this interval in `src/App.js`:
+
+```javascript
+const interval = setInterval(fetchFrames, 2000); // Change 2000 to your desired interval
+```
 
 ## Troubleshooting
-- **Worker Not Responding**: Ensure Redis is running and the worker script is active.
-- **Video Playback Issues**: Verify FFmpeg is installed and accessible in your PATH.
-- **Debugging**: Enable debug logs in `app.py` for detailed output.
 
-## License
-MIT
+1. **No frames showing**: Check that your frames folder path is correct in `server.py`
+2. **Images not loading**: Ensure the frames folder contains supported image formats
+3. **CORS errors**: Make sure the Flask-CORS extension is installed and enabled

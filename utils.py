@@ -392,12 +392,11 @@ def copy_frame_video(repo_path: str, source: float, target: float) -> None:
     print(f"Copied frame_{source:010.3f}.jpg to frame_{target:010.3f}.jpg")
 
 
-
 if __name__ == "__main__":
     # Example: local test of interpolation pipeline
     #Decompose video to frames
-    video_path = "wedding.mp4"
-    output_video_path = "output_video.mp4"
+    video_path = "sample/wedding.mp4"
+    output_video_path = "sample/output_video.mp4"
     repo_path = "frames"
 
     decompose_video(video_path, repo_path)
@@ -456,11 +455,11 @@ if __name__ == "__main__":
  
     #interpolate_frames_from_indices(repo_path, 81, 85)
     
-    interpolate_frames_video(repo_path, [float(i)+0.5 for i in range(40,60)])
+    #interpolate_frames_video(repo_path, [float(i)+0.5 for i in range(40,60)])
 
-    copy_frame_video(repo_path, 110, 108.5)
+    #copy_frame_video(repo_path, 110, 108.5)
 
     #Recompose video from frames
-    recompose_video(repo_path, output_video_path)
+    #recompose_video(repo_path, output_video_path)
     
     print("Done")
