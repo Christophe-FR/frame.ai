@@ -79,7 +79,10 @@ function App() {
   return (
     <div className="app">
       <header className="header">
-        <h1>Frames Viewer</h1>
+        <h1>Remove this Flash ⚡🎥</h1>
+        <p className="description">
+          The AI solution to remove flash from videos and replace individual frames in videos.
+        </p>
         <div className="info">
           <span>Total frames: {totalFrames}</span>
           <span>Page {currentPage + 1} of {totalPages}</span>

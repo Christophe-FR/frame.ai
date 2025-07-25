@@ -16,7 +16,7 @@ body {
 }
 
 .header {
-  text-align: center;
+  text-align: left;
   margin-bottom: 30px;
   padding: 20px;
   background: white;
@@ -26,7 +26,17 @@ body {
 
 .header h1 {
   color: #333;
-  margin-bottom: 15px;
+  margin-bottom: 10px;
+  font-size: 2.5rem;
+  font-weight: bold;
+}
+
+.description {
+  color: #666;
+  font-size: 1.1rem;
+  margin-bottom: 20px;
+  line-height: 1.5;
+  max-width: 600px;
 }
 
 .info {
@@ -240,5 +250,13 @@ body {
   
   .search-input {
     min-width: 250px;
+  }
+  
+  .header h1 {
+    font-size: 2rem;
+  }
+  
+  .description {
+    font-size: 1rem;
   }
 } 
