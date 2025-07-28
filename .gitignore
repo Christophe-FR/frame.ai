@@ -38,6 +38,7 @@ Thumbs.db
 # Project specific
 /tfhub_cache/
 /frames/
+/static/
 **.bak
 
 # Image files
