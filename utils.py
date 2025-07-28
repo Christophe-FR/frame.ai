@@ -403,7 +403,7 @@ def video_get_frames_by_index(repo_path: str, index: List[int]) -> List[np.ndarr
 
 if __name__ == "__main__":
 
-    frames = video_get_frames_list("/workspace/uploads/2afaa5d5-b243-41d7-a7a8-efa21083d290")
+    frames = video_get_frames_list("/workspace/static/2afaa5d5-b243-41d7-a7a8-efa21083d290")
     print(frames)
     """
     # Example: local test of interpolation pipeline
