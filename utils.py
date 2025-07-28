@@ -173,7 +173,7 @@ def save_frames(frames: List[np.ndarray], filenames: List[str], root_folder: str
         saved_paths.append(path)
     return saved_paths
 
-def extract_video_frames(video_path: str, repo_path: str) -> None:
+def video_extract_frames(video_path: str, repo_path: str) -> None:
     """Extract frames from video."""
     output_pattern = os.path.join(repo_path, "frame_%06d.jpg")
     subprocess.run(['ffmpeg', '-i', video_path, '-q:v', '1', '-y', output_pattern], capture_output=True, check=True)
@@ -181,7 +181,7 @@ def extract_video_frames(video_path: str, repo_path: str) -> None:
         if '.' not in os.path.basename(frame_path)[6:-4]:
             os.rename(frame_path, frame_path.replace('.jpg', '.000.jpg'))
 
-def extract_video_audio(video_path: str, repo_path: str) -> None:
+def video_extract_audio(video_path: str, repo_path: str) -> None:
     """Extract audio from video with original sample rate."""
     audio_path = os.path.join(repo_path, "audio.wav")
     
@@ -192,7 +192,7 @@ def extract_video_audio(video_path: str, repo_path: str) -> None:
     cmd = ['ffmpeg', '-i', video_path, '-vn', '-acodec', 'pcm_s16le', '-ar', sample_rate, '-ac', '2', '-y', audio_path]
     subprocess.run(cmd, capture_output=True, check=True)
 
-def extract_video_metadata(video_path: str, repo_path: str) -> None:
+def video_extract_metadata(video_path: str, repo_path: str) -> None:
     """Extract comprehensive video metadata."""
     import json
     
@@ -226,16 +226,16 @@ def extract_video_metadata(video_path: str, repo_path: str) -> None:
     with open(metadata_path, 'w') as f:
         json.dump(metadata, f, indent=2)
 
-def decompose_video(video_path: str, repo_path: str) -> None:
+def video_decompose(video_path: str, repo_path: str) -> None:
     """Decompose video into frames, audio, and metadata."""
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video not found: {video_path}")
     os.makedirs(repo_path, exist_ok=True)
-    extract_video_metadata(video_path, repo_path)
-    extract_video_audio(video_path, repo_path)
-    extract_video_frames(video_path, repo_path)
+    video_extract_metadata(video_path, repo_path)
+    video_extract_audio(video_path, repo_path)
+    video_extract_frames(video_path, repo_path)
 
-def recompose_video(repo_path: str, output_video_path: str) -> None:
+def video_recompose(repo_path: str, output_video_path: str) -> None:
     """Recompose video using original metadata."""
     if not os.path.exists(repo_path):
         raise FileNotFoundError(f"Repo not found: {repo_path}")
@@ -293,21 +293,8 @@ def recompose_video(repo_path: str, output_video_path: str) -> None:
     subprocess.run(cmd, capture_output=True, check=True)
     #os.remove(file_list)
 
-def schedule_interpolate_video(repo_path: str, targets: List[float]):
-    frame_pattern = os.path.join(repo_path, "frame_*.jpg")
-    frames = glob.glob(frame_pattern)
-    anchors = []
-    for frame in frames:
-        # Extract the frame number part (everything between "frame_" and ".jpg")
-        frame_name = os.path.basename(frame)
-        if frame_name.startswith("frame_") and frame_name.endswith(".jpg"):
-            frame_number_str = frame_name[6:-4]  # Remove "frame_" and ".jpg"
-            try:
-                frame_number = float(frame_number_str)
-                anchors.append(frame_number)
-            except ValueError:
-                print(f"Warning: Could not parse frame number from {frame_name}")
-    
+def video_schedule_interpolation(repo_path: str, targets: List[float]):
+    anchors = video_get_frames_list(repo_path)
     anchors = set(anchors)
     targets = set(targets)
     ineligible = anchors & targets
@@ -351,8 +338,8 @@ def schedule_interpolate_video(repo_path: str, targets: List[float]):
 
     return result
 
-def interpolate_frames_video(repo_path: str, targets: List[float]):
-    schedule = schedule_interpolate_video(repo_path, targets)
+def video_interpolate_frames(repo_path: str, targets: List[float]):
+    schedule = video_schedule_interpolation(repo_path, targets)
     for target, a, b in schedule:
         # Handle frame indices for both input and output
         # Use format to match actual frame names: frame_XXXXXX.000.jpg
@@ -372,7 +359,7 @@ def interpolate_frames_video(repo_path: str, targets: List[float]):
         output_path = os.path.join(repo_path, f"frame_{target:010.3f}.jpg")
         save_frames(frames, [output_path])
 
-def copy_frame_video(repo_path: str, source: float, target: float) -> None:
+def video_copy_frames(repo_path: str, source: float, target: float) -> None:
     """Copy a frame from source_index to target_index in a repo.
     
     Args:
@@ -391,16 +378,32 @@ def copy_frame_video(repo_path: str, source: float, target: float) -> None:
     shutil.copy2(source_path, target_path)
     print(f"Copied frame_{source:010.3f}.jpg to frame_{target:010.3f}.jpg")
 
-def get_frames_video_list(repo_path: str) -> List[str]:
+def video_get_frames_list(repo_path: str) -> List[float]:
     if not os.path.exists(repo_path):
         return []
     frame_pattern = os.path.join(repo_path, "frame_*.jpg")
     frames = glob.glob(frame_pattern)
+    frame_numbers = [float(os.path.basename(frame)[6:-4]) for frame in frames]
+    return sorted(frame_numbers)
+
+def video_get_frames(repo_path: str, frame_numbers: List[float]) -> List[np.ndarray]:
+    frames = []
+    for frame_number in frame_numbers:
+        frame_path = os.path.join(repo_path, f"frame_{frame_number:010.3f}.jpg")
+        frame = load_frame(frame_path)
+        frames.append(frame)
     return frames
+
+def video_get_frames_by_index(repo_path: str, index: List[int]) -> List[np.ndarray]:
+    frame_list = video_get_frames_list(repo_path)
+    frame_numbers = [frame_list[i] for i in index]
+    frames = video_get_frames(repo_path, frame_numbers)
+    return frames
+
 
 if __name__ == "__main__":
 
-    frames = get_frames_video_list("/workspace/uploads/2afaa5d5-b243-41d7-a7a8-efa21083d290")
+    frames = video_get_frames_list("/workspace/uploads/2afaa5d5-b243-41d7-a7a8-efa21083d290")
     print(frames)
     """
     # Example: local test of interpolation pipeline
@@ -409,7 +412,7 @@ if __name__ == "__main__":
     output_video_path = "sample/output_video.mp4"
     repo_path = "frames"
 
-    decompose_video(video_path, repo_path)
+    video_decompose(video_path, repo_path)
     
     defects = [
         16101,16103,16106,16598,16600,16602,16605,16607,16609,16611,16615,
@@ -465,11 +468,11 @@ if __name__ == "__main__":
  
     #interpolate_frames_from_indices(repo_path, 81, 85)
     
-    #interpolate_frames_video(repo_path, [float(i)+0.5 for i in range(40,60)])
+    #video_interpolate_frames(repo_path, [float(i)+0.5 for i in range(40,60)])
 
-    #copy_frame_video(repo_path, 110, 108.5)
+    #video_copy_frames(repo_path, 110, 108.5)
 
     #Recompose video from frames
-    #recompose_video(repo_path, output_video_path)
+    #video_recompose(repo_path, output_video_path)
     
     print("Done")

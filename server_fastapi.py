@@ -1,11 +1,14 @@
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi import Request
 import os
 import glob
-from utils import get_frames_video_list
+from utils import video_get_frames_list, video_get_frames_by_index
+import cv2
+import numpy as np
+from io import BytesIO
+from fastapi.responses import Response
+import base64
 
 app = FastAPI(title="Frames Viewer")
 
@@ -16,30 +19,26 @@ FRAMES_FOLDER = "frames"
 UPLOADS_FOLDER = "uploads"
 ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff'}
 
-@app.get("/uploads/{repo_uuid}/{filename}")
-@app.head("/uploads/{repo_uuid}/{filename}")
-async def get_frame_image(repo_uuid: str, filename: str, request: Request):
-    """Serve frame images from uploads directory."""
-    file_path = os.path.join(UPLOADS_FOLDER, repo_uuid, filename)
-    if not os.path.exists(file_path):
-        raise HTTPException(404, "Frame not found")
-    return FileResponse(file_path)
-
-@app.get("/api/{repo_uuid}/frames")
-async def api_get_frames_video_list(repo_uuid: str):
-     #Get frames from a specific repository. #
+@app.get("/{repo_uuid}/frames/count")
+async def get_frame_count(repo_uuid: str):
+    """Get the total number of frames in a repository."""
     repo_path = os.path.join(UPLOADS_FOLDER, repo_uuid)
-    frames = get_frames_video_list(repo_path)
-    if not frames:
-        raise HTTPException(404, "Repository not found")
-    # Convert full paths to just filenames for frontend
-    frame_names = [os.path.basename(f) for f in sorted(frames)]
-    return {"frames": frame_names, "total": len(frame_names), "repo_uuid": repo_uuid}
+    frame_numbers = video_get_frames_list(repo_path)
+    return {"total": len(frame_numbers), "repo_uuid": repo_uuid}
+
+@app.get("/{repo_uuid}/frames")
+async def api_video_get_frames_by_index(repo_uuid: str, start: int = 0, end: int = None):
+    """Get frames by start and end indices."""
+    repo_path = os.path.join(UPLOADS_FOLDER, repo_uuid)
+    indices = list(range(start, end + 1))
+    frames = video_get_frames_by_index(repo_path, indices)
+    frame_data = [f"data:image/jpeg;base64,{base64.b64encode(cv2.imencode('.jpg', cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))[1]).decode()}" for frame in frames]
+    return {"frames": frame_data}
 
 @app.get("/api/health")
 async def health():
      #Health check endpoint. #
-    frames = get_frames_video_list(FRAMES_FOLDER)
+    frames = video_get_frames_list(FRAMES_FOLDER)
     return {"status": "ok", "frames": len(frames)}
 
 if __name__ == "__main__":
@@ -48,7 +47,6 @@ if __name__ == "__main__":
     print(f"🚀 FastAPI server starting on http://localhost:8000")
     print(f"📁 Frames folder: {os.path.abspath(FRAMES_FOLDER)}")
     print(f"📁 Uploads folder: {os.path.abspath(UPLOADS_FOLDER)}")
-    print(f"🔗 Direct access: http://localhost:8000/uploads/<uuid>/frame_*.jpg")
     
     import uvicorn
     uvicorn.run("server_fastapi:app", host="0.0.0.0", port=8000, reload=True) 

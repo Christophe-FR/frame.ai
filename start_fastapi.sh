@@ -27,18 +27,28 @@ echo "🔧 Starting FastAPI backend..."
 python server_fastapi.py &
 BACKEND_PID=$!
 
-# Wait a moment for backend to start
-sleep 3
+# Wait longer for backend to start (TensorFlow model loading takes time)
+echo "⏳ Waiting for backend to start (this may take a minute for TensorFlow model loading)..."
+sleep 30
 
-# Check if backend started successfully
+# Check if backend started successfully with multiple retries
+echo "🔍 Checking if backend is ready..."
+for i in {1..10}; do
+    if curl -s http://localhost:8000/api/health > /dev/null; then
+        echo "✅ FastAPI backend is running at http://localhost:8000"
+        echo "📚 API documentation available at http://localhost:8000/docs"
+        break
+    else
+        echo "⏳ Still waiting for backend to start... (attempt $i/10)"
+        sleep 5
+    fi
+done
+
 if ! curl -s http://localhost:8000/api/health > /dev/null; then
-    echo "❌ Error: FastAPI backend failed to start"
+    echo "❌ Error: FastAPI backend failed to start after multiple attempts"
     kill $BACKEND_PID 2>/dev/null
     exit 1
 fi
-
-echo "✅ FastAPI backend is running at http://localhost:8000"
-echo "📚 API documentation available at http://localhost:8000/docs"
 
 # Start the React frontend
 echo "🎨 Starting React frontend..."

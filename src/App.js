@@ -228,6 +228,7 @@ function FrameDisplay() {
 
   useEffect(() => {
     if (repoUuid) {
+      fetchTotalFrames(repoUuid);
       fetchFramesFromRepo(repoUuid);
       
       // Set up polling to keep frames in sync
@@ -237,7 +238,19 @@ function FrameDisplay() {
       
       return () => clearInterval(pollInterval);
     }
-  }, [repoUuid]);
+  }, [repoUuid, currentPage]); // Add currentPage to dependencies
+
+  const fetchTotalFrames = async (uuid) => {
+    try {
+      const response = await fetch(`http://localhost:8000/${uuid}/frames/count`);
+      if (response.ok) {
+        const data = await response.json();
+        setTotalFrames(data.total);
+      }
+    } catch (err) {
+      console.error('Failed to get total frames count:', err);
+    }
+  };
 
   const fetchFramesFromRepo = async (uuid, silent = false) => {
     if (!silent) {
@@ -245,29 +258,22 @@ function FrameDisplay() {
     }
     
     try {
-      const response = await fetch(`/api/${uuid}/frames`);
+      // Calculate the start and end indices for the current page
+      const start = (currentPage - 1) * framesPerPage;
+      const end = start + framesPerPage - 1;
+      
+      const response = await fetch(`http://localhost:8000/${uuid}/frames?start=${start}&end=${end}`);
       if (!response.ok) {
         throw new Error('Failed to fetch frames');
       }
       const data = await response.json();
       
-      // Check if frames have changed
-      const framesChanged = JSON.stringify(data.frames) !== JSON.stringify(frames);
+      // The new endpoint returns base64 data URLs directly for the requested range
+      setFrames(data.frames);
+      setLastUpdate(new Date());
       
-      if (framesChanged) {
-        setFrames(data.frames);
-        setTotalFrames(data.total);
-        setLastUpdate(new Date());
-        
-        // Adjust current page if it's now out of bounds
-        const maxPage = Math.ceil(data.total / framesPerPage);
-        if (currentPage > maxPage && maxPage > 0) {
-          setCurrentPage(maxPage);
-        }
-        
-        if (!silent) {
-          console.log(`Frames updated: ${data.total} frames found`);
-        }
+      if (!silent) {
+        console.log(`Frames loaded: ${data.frames.length} frames for page ${currentPage}`);
       }
     } catch (err) {
       if (!silent) {
@@ -280,18 +286,10 @@ function FrameDisplay() {
     }
   };
 
-  // Format file size
-  const formatFileSize = (bytes) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
-
   // Pagination functions
   const goToPage = (page) => {
     setCurrentPage(page);
+    // fetchFramesFromRepo will be called automatically due to useEffect dependency
   };
 
   const goToNextPage = () => {
@@ -307,9 +305,7 @@ function FrameDisplay() {
   };
 
   // Calculate current frames to display
-  const startIndex = (currentPage - 1) * framesPerPage;
-  const endIndex = startIndex + framesPerPage;
-  const currentFrames = frames.slice(startIndex, endIndex);
+  const currentFrames = frames; // No need to slice since API returns only the frames for current page
 
   return (
     <div className="app">
@@ -350,11 +346,11 @@ function FrameDisplay() {
           </div>
 
           <div className="frames-grid">
-            {currentFrames.map((frame, index) => (
+            {currentFrames.map((frameDataUrl, index) => (
               <div key={index} className="frame-item">
                 <img 
-                  src={`http://localhost:8000/uploads/${repoUuid}/${frame}`}
-                  alt={frame}
+                  src={frameDataUrl}
+                  alt={`Frame ${index + 1}`}
                   onError={(e) => {
                     e.target.style.display = 'none';
                     e.target.nextSibling.style.display = 'block';
@@ -364,7 +360,7 @@ function FrameDisplay() {
                   Failed to load image
                 </div>
                 <div className="frame-info">
-                  <div className="frame-name">{frame}</div>
+                  <div className="frame-name">Frame {index + 1}</div>
                 </div>
               </div>
             ))}
