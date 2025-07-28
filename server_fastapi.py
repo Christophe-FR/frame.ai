@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Request
 import os
 import glob
-from utils import video_get_frames_list, video_get_frames_by_index
+from utils import video_get_frames_filenames
 import cv2
 import numpy as np
 from io import BytesIO
@@ -24,22 +24,19 @@ ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff'}
 # Mount static files for direct image access
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+
+@app.get("/{repo_uuid}/frames") # example: http://localhost:8000/2afaa5d5-b243-41d7-a7a8-efa21083d290/frames?start=5&end=10
+async def api_video_get_frames_by_index(repo_uuid: str, start: int = 0, end: int = None):
+    repo_path = os.path.join(STATIC_FOLDER, repo_uuid)
+    frame_paths = video_get_frames_filenames(repo_path)
+    return {"frames": frame_paths[start:end + 1]}
+
 @app.get("/{repo_uuid}/frames/count")
 async def get_frame_count(repo_uuid: str):
     """Get the total number of frames in a repository."""
     repo_path = os.path.join(STATIC_FOLDER, repo_uuid)
-    frame_numbers = video_get_frames_list(repo_path)
+    frame_numbers = video_get_frames_filenames(repo_path)
     return {"total": len(frame_numbers)}
-
-@app.get("/{repo_uuid}/frames")
-async def api_video_get_frames_by_index(repo_uuid: str, start: int = 0, end: int = None):
-    repo_path = os.path.join(STATIC_FOLDER, repo_uuid)
-    frame_numbers = video_get_frames_list(repo_path)
-    if end is None:
-        end = len(frame_numbers) - 1
-    requested_frame_numbers = frame_numbers[start:end + 1]
-    frame_paths = [f"/static/{repo_uuid}/frame_{frame_number:010.3f}.jpg" for frame_number in requested_frame_numbers]
-    return {"frames": frame_paths}
 
 @app.get("/api/health")
 async def health():
@@ -54,3 +51,5 @@ if __name__ == "__main__":
     
     import uvicorn
     uvicorn.run("server_fastapi:app", host="0.0.0.0", port=8000, reload=True) 
+
+    

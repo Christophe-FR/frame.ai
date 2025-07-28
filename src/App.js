@@ -305,7 +305,7 @@ function FrameDisplay() {
             {currentFrames.map((framePath, index) => (
               <div key={index} className="frame-container">
                 <img 
-                  src={`http://localhost:8000${framePath}`}
+                  src={`http://localhost:8000/${framePath}`}
                   alt={`Frame ${(currentPage - 1) * framesPerPage + index + 1}`}
                   className="frame-image"
                   loading="lazy"

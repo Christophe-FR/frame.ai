@@ -10,44 +10,58 @@ import tensorflow_hub as hub
 from typing import Dict, Any, List, Tuple, Union
 import json
 
-# Suppress TensorFlow logging
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 0=all, 1=no INFO, 2=no INFO/WARN, 3=no INFO/WARN/ERROR
 
-# Configure GPU memory growth to prevent memory issues
+def configure_gpu():
+    """Configure GPU memory growth to prevent memory issues."""
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        try:
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            logging.info(f"GPU memory growth enabled for {len(gpus)} GPU(s)")
+        except RuntimeError as e:
+            logging.warning(f"GPU configuration failed: {e}")
+    else:
+        logging.info("No GPU devices found, using CPU")
 
-gpus = tf.config.experimental.list_physical_devices('GPU')
-if gpus:
-    try:
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-    except RuntimeError as e:
-        print(e)
+def setup_tensorflow():
+    # Suppress TensorFlow logging
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 0=all, 1=no INFO, 2=no INFO/WARN, 3=no INFO/WARN/ERROR
 
-
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-logger.info(f"TensorFlow version: {tf.__version__}")
-logger.info(tf.config.list_physical_devices('GPU'))
-
-# Set cache directory for TensorFlow Hub (inside Docker container)
-cache_dir = os.path.join(os.getcwd(), 'tfhub_cache')
-os.environ['TFHUB_CACHE_DIR'] = cache_dir
-os.makedirs(cache_dir, exist_ok=True)
-
-# Initialize model as None
-model = None
-
-
-logger.info("Loading FILM model from TensorFlow Hub...")
-logger.info(f"Cache directory: {os.environ['TFHUB_CACHE_DIR']}")
-
-# Load the model with progress tracking
-model = hub.load("https://tfhub.dev/google/film/1")
-logger.info("FILM model loaded successfully!")
+    # Set up logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
     
+    logger.info(f"TensorFlow version: {tf.__version__}")
+    logger.info(f"Available devices: {tf.config.list_physical_devices()}")
+    
+    # Configure GPU
+    configure_gpu()
+    
+    # Set cache directory for TensorFlow Hub
+    cache_dir = os.path.join(os.getcwd(), 'tfhub_cache')
+    os.environ['TFHUB_CACHE_DIR'] = cache_dir
+    os.makedirs(cache_dir, exist_ok=True)
+    logger.info(f"TFHub cache directory: {cache_dir}")
 
+def load_model():
+    """Load the FILM model from TensorFlow Hub."""
+    logger = logging.getLogger(__name__)
+    
+    logger.info("Loading FILM model from TensorFlow Hub...")
+    try:
+        model = hub.load("https://tfhub.dev/google/film/1")
+        logger.info("FILM model loaded successfully!")
+        return model
+    except Exception as e:
+        logger.error(f"Failed to load FILM model: {e}")
+        raise
+
+#INITIALIZATION
+setup_tensorflow()
+model = load_model()
+
+#RAM OPERATIONS
 def load_frame(path: str) -> np.ndarray:
     """Load a frame from disk and convert to RGB."""
     frame = cv2.imread(path)
@@ -63,7 +77,7 @@ def denormalize(frame: np.ndarray) -> np.ndarray:
     """Convert frame from float [0, 1] to uint8 [0, 255]."""
     return (np.clip(frame, 0, 1) * 255).astype(np.uint8)
 
-def resize_frame(frame: np.ndarray, max_width: int = 2048, max_height: int = 1080) -> tuple:
+def downsample(frame: np.ndarray, max_width: int = 2048, max_height: int = 1080) -> tuple:
     """Resize frame if it exceeds maximum dimensions while maintaining aspect ratio.
     
     Args:
@@ -90,7 +104,7 @@ def resize_frame(frame: np.ndarray, max_width: int = 2048, max_height: int = 108
     resized = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
     return resized, original_shape
 
-def restore_frame_size(frame: np.ndarray, original_shape: tuple) -> np.ndarray:
+def upsample(frame: np.ndarray, original_shape: tuple) -> np.ndarray:
     """Restore frame to its original size.
     
     Args:
@@ -114,8 +128,8 @@ def interpolate_frames_at_times(frame1: np.ndarray, frame2: np.ndarray, times: L
         List of interpolated frames as numpy arrays (RGB uint8)
     """
     # Resize frames if needed
-    frame1_resized, original_shape = resize_frame(frame1)
-    frame2_resized, _ = resize_frame(frame2)
+    frame1_resized, original_shape = downsample(frame1)
+    frame2_resized, _ = downsample(frame2)
     
     # Normalize frames
     frame1_norm = normalize(frame1_resized)
@@ -131,7 +145,7 @@ def interpolate_frames_at_times(frame1: np.ndarray, frame2: np.ndarray, times: L
         }
         result = model(input_dict)
         interpolated_frame = result["image"][0].numpy()
-        interpolated.append(restore_frame_size(denormalize(interpolated_frame), original_shape))
+        interpolated.append(upsample(denormalize(interpolated_frame), original_shape))
     
     return interpolated
 
@@ -173,6 +187,7 @@ def save_frames(frames: List[np.ndarray], filenames: List[str], root_folder: str
         saved_paths.append(path)
     return saved_paths
 
+#DISK OPERATIONS
 def video_extract_frames(video_path: str, repo_path: str) -> None:
     """Extract frames from video."""
     output_pattern = os.path.join(repo_path, "frame_%06d.jpg")
@@ -378,13 +393,17 @@ def video_copy_frames(repo_path: str, source: float, target: float) -> None:
     shutil.copy2(source_path, target_path)
     print(f"Copied frame_{source:010.3f}.jpg to frame_{target:010.3f}.jpg")
 
-def video_get_frames_list(repo_path: str) -> List[float]:
+def video_get_frames_filenames(repo_path: str) -> List[str]:
     if not os.path.exists(repo_path):
         return []
     frame_pattern = os.path.join(repo_path, "frame_*.jpg")
-    frames = glob.glob(frame_pattern)
-    frame_numbers = [float(os.path.basename(frame)[6:-4]) for frame in frames]
-    return sorted(frame_numbers)
+    frames_filenames = glob.glob(frame_pattern)
+    return sorted(frames_filenames)
+
+def video_get_frames_list(repo_path: str) -> List[float]:
+    frames_filenames = video_get_frames_filenames(repo_path)
+    frame_numbers = [float(os.path.basename(frames_filename)[6:-4]) for frames_filename in frames_filenames]
+    return frame_numbers
 
 def video_get_frames(repo_path: str, frame_numbers: List[float]) -> List[np.ndarray]:
     frames = []
@@ -394,26 +413,20 @@ def video_get_frames(repo_path: str, frame_numbers: List[float]) -> List[np.ndar
         frames.append(frame)
     return frames
 
-def video_get_frames_by_index(repo_path: str, index: List[int]) -> List[np.ndarray]:
-    frame_list = video_get_frames_list(repo_path)
-    frame_numbers = [frame_list[i] for i in index]
-    frames = video_get_frames(repo_path, frame_numbers)
-    return frames
-
 
 if __name__ == "__main__":
-
-    frames = video_get_frames_list("/workspace/static/2afaa5d5-b243-41d7-a7a8-efa21083d290")
-    print(frames)
-    """
-    # Example: local test of interpolation pipeline
-    #Decompose video to frames
+    
     video_path = "sample/wedding.mp4"
     output_video_path = "sample/output_video.mp4"
-    repo_path = "frames"
-
+    repo_path = "static/my/"
     video_decompose(video_path, repo_path)
+    video_interpolate_frames(repo_path, [82, 84])
+    #video_copy_frames(repo_path, 100, 101)
+    #video_copy_frames(repo_path, 100, 102)
+    video_recompose(repo_path, output_video_path)
+
     
+    """
     defects = [
         16101,16103,16106,16598,16600,16602,16605,16607,16609,16611,16615,
         16617,16619,16622,16646,16648,16651,16653,16686,16689,16725,16727,
@@ -447,32 +460,20 @@ if __name__ == "__main__":
     interpolate_frames_from_indices(repo_path, 25367-1, 25368+1)
     interpolate_frames_from_indices(repo_path, 25376-1, 25377+1)
     interpolate_frames_from_indices(repo_path, 25395-1, 25396+1)
+    """
 
-    # Copy frame 16262 to frame 16263
-    copy_frame(repo_path, 16262, 16263)
-    # Copy frame 12169 to frame 12170
-    copy_frame(repo_path, 12169, 12170)
+
     """
     # Load frames using the new function
-    #frame1 = load_frame("frame_17848.jpg")
-    #frame2 = load_frame("frame_17850.jpg")
+    frame1 = load_frame("frame_17848.jpg")
+    frame2 = load_frame("frame_17850.jpg")
 
-    #frames = interpolate_frames(frame1, frame2, 2)
+    frames = interpolate_frames(frame1, frame2, 2)
 
     # Save results
-    #saved = save_frames(frames, filenames=["frame_17849-1.jpg", "frame_17849-2.jpg"])
-    #print(f"Saved interpolated frames: {saved}")
+    saved = save_frames(frames, filenames=["frame_17849-1.jpg", "frame_17849-2.jpg"])
+    print(f"Saved interpolated frames: {saved}")
 
-    #interpolate_frames_from_files("frames/frame_000081.jpg", "frames/frame_000083.jpg", ["frames/frame_000082.jpg"])
-    #interpolate_frames_from_files("frames/frame_000083.jpg", "frames/frame_000085.jpg", ["frames/frame_000084.jpg"])
- 
-    #interpolate_frames_from_indices(repo_path, 81, 85)
-    
-    #video_interpolate_frames(repo_path, [float(i)+0.5 for i in range(40,60)])
-
-    #video_copy_frames(repo_path, 110, 108.5)
-
-    #Recompose video from frames
-    #video_recompose(repo_path, output_video_path)
+    """
     
     print("Done")
