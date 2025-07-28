@@ -6,7 +6,7 @@ numpy==1.19.5
 opencv-python>=4.11.0.86
 pillow>=9.0.1
 protobuf==3.19.6
-typing-extensions==3.10.0.2
+typing-extensions>=4.5.0
 
 # =============================================================================
 # STREAMLIT UI DEPENDENCIES
@@ -26,8 +26,8 @@ redis>=5.0.0
 # REACT UI (FASTAPI) DEPENDENCIES
 # =============================================================================
 # These are for the FastAPI backend that serves the React frontend
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
+fastapi==0.102.0
+uvicorn[standard]==0.21.1
 python-multipart==0.0.6
 aiofiles==23.2.1
 
@@ -36,5 +36,5 @@ aiofiles==23.2.1
 # =============================================================================
 # These were used for the Flask version, kept for compatibility
 # Can be removed if you only use FastAPI
-flask==2.3.3
+flask==2.2.5
 flask-cors==4.0.0

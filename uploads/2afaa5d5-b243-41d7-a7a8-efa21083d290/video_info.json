@@ -1,0 +1,31 @@
+{
+  "video": {
+    "codec_name": "h264",
+    "profile": "High 10",
+    "width": 4096,
+    "height": 2160,
+    "has_b_frames": 2,
+    "pix_fmt": "yuv420p10le",
+    "level": 51,
+    "color_range": "tv",
+    "color_space": "bt709",
+    "color_transfer": "bt709",
+    "color_primaries": "bt709",
+    "r_frame_rate": "25/1",
+    "avg_frame_rate": "25/1",
+    "bit_rate": "19103565"
+  },
+  "audio": {
+    "codec_name": "aac",
+    "sample_rate": "48000",
+    "channels": 2,
+    "channel_layout": "stereo",
+    "bit_rate": "94999"
+  },
+  "format": {
+    "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+    "start_time": "0.000000",
+    "duration": "8.920000",
+    "bit_rate": "19205829"
+  }
+}

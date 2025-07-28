@@ -391,8 +391,18 @@ def copy_frame_video(repo_path: str, source: float, target: float) -> None:
     shutil.copy2(source_path, target_path)
     print(f"Copied frame_{source:010.3f}.jpg to frame_{target:010.3f}.jpg")
 
+def get_frames_video_list(repo_path: str) -> List[str]:
+    if not os.path.exists(repo_path):
+        return []
+    frame_pattern = os.path.join(repo_path, "frame_*.jpg")
+    frames = glob.glob(frame_pattern)
+    return frames
 
 if __name__ == "__main__":
+
+    frames = get_frames_video_list("/workspace/uploads/2afaa5d5-b243-41d7-a7a8-efa21083d290")
+    print(frames)
+    """
     # Example: local test of interpolation pipeline
     #Decompose video to frames
     video_path = "sample/wedding.mp4"
@@ -400,7 +410,7 @@ if __name__ == "__main__":
     repo_path = "frames"
 
     decompose_video(video_path, repo_path)
-    """
+    
     defects = [
         16101,16103,16106,16598,16600,16602,16605,16607,16609,16611,16615,
         16617,16619,16622,16646,16648,16651,16653,16686,16689,16725,16727,
