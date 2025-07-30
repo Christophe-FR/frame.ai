@@ -45,8 +45,8 @@ npm start
 ```
 
 The application will be available at:
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:5000
+- Frontend: http://localhost:3001
+- Backend API: http://localhost:8000
 
 ## Usage
 
