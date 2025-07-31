@@ -464,6 +464,14 @@ function FrameDisplay() {
     }
   }, [currentPage, goToPage]);
 
+  // Load video info immediately when component mounts
+  useEffect(() => {
+    if (repoUuid && repoUuid !== 'pending') {
+      console.log(`📹 Loading video info for repo: ${repoUuid}`);
+      fetchVideoInfo(repoUuid);
+    }
+  }, [repoUuid, fetchVideoInfo]);
+
   // Load frames when page changes
   useEffect(() => {
     console.log(`🎬 useEffect triggered with repoUuid: ${repoUuid}`);
@@ -473,13 +481,12 @@ function FrameDisplay() {
     if (repoUuid && repoUuid !== 'pending') {
       console.log(`🎬 Loading frames for repo: ${repoUuid}`);
       loadFrames(repoUuid);
-      fetchVideoInfo(repoUuid);
     } else if (repoUuid === 'pending') {
       console.log(`⏳ Skipping frame load - waiting for actual UUID`);
     } else {
       console.log(`❌ No repoUuid available for frame loading`);
     }
-  }, [repoUuid, currentPage, loadFrames, fetchVideoInfo]);
+  }, [repoUuid, currentPage, loadFrames]);
 
   // Check processing status periodically
   useEffect(() => {
@@ -520,6 +527,7 @@ function FrameDisplay() {
           // Check processing status and total frame count
           checkProcessingStatus(repoUuid);
           fetchTotalFrames(repoUuid);
+          fetchVideoInfo(repoUuid);
           // Reload frames for current page
           loadFrames(repoUuid);
         } else {
@@ -539,7 +547,7 @@ function FrameDisplay() {
       console.log(`⏸️ Auto-refresh not enabled - no repoUuid`);
       console.log(`⏸️ repoUuid: ${repoUuid}`);
     }
-  }, [repoUuid, checkProcessingStatus, loadFrames, fetchTotalFrames, checkForChanges]);
+  }, [repoUuid, checkProcessingStatus, loadFrames, fetchTotalFrames, fetchVideoInfo, checkForChanges]);
 
   return (
     <div className="app">
