@@ -256,6 +256,7 @@ function FrameDisplay() {
   const [lastDirModTime, setLastDirModTime] = useState(null);
   const [lastKnownFrameCount, setLastKnownFrameCount] = useState(0);
   const [lastKnownFrameNames, setLastKnownFrameNames] = useState('');
+  const [videoInfo, setVideoInfo] = useState(null);
   
   const framesPerPage = 20;
 
@@ -281,6 +282,18 @@ function FrameDisplay() {
       }
     } catch (err) {
       console.error('Failed to get total frames count:', err);
+    }
+  }, []);
+
+  const fetchVideoInfo = useCallback(async (uuid) => {
+    try {
+      const response = await fetch(`http://localhost:8500/static/${uuid}/video_info.json`);
+      if (response.ok) {
+        const data = await response.json();
+        setVideoInfo(data);
+      }
+    } catch (err) {
+      console.error('Failed to get video info:', err);
     }
   }, []);
 
@@ -460,12 +473,13 @@ function FrameDisplay() {
     if (repoUuid && repoUuid !== 'pending') {
       console.log(`🎬 Loading frames for repo: ${repoUuid}`);
       loadFrames(repoUuid);
+      fetchVideoInfo(repoUuid);
     } else if (repoUuid === 'pending') {
       console.log(`⏳ Skipping frame load - waiting for actual UUID`);
     } else {
       console.log(`❌ No repoUuid available for frame loading`);
     }
-  }, [repoUuid, currentPage, loadFrames]);
+  }, [repoUuid, currentPage, loadFrames, fetchVideoInfo]);
 
   // Check processing status periodically
   useEffect(() => {
@@ -537,12 +551,25 @@ function FrameDisplay() {
         <p className="repo-info">
           Viewing frames from repository: {repoUuid}
         </p>
-        <button 
-          onClick={() => navigate('/')} 
-          className="back-button"
-        >
-          ← Back to Upload
-        </button>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <button 
+            onClick={() => navigate('/')} 
+            className="back-button"
+          >
+            ← Back to Upload
+          </button>
+          <button 
+            onClick={() => {
+              loadFrames(repoUuid);
+              // Also fetch the latest frame count
+              fetchTotalFrames(repoUuid);
+            }} 
+            className="refresh-button"
+            disabled={loading}
+          >
+            {loading ? 'Refreshing...' : '🔄 Refresh'}
+          </button>
+        </div>
       </header>
 
       {loading ? (
@@ -563,41 +590,94 @@ function FrameDisplay() {
                 Last updated: {lastUpdate.toLocaleTimeString()}
               </p>
             )}
-            <div className="controls">
-              <button 
-                onClick={() => {
-                  loadFrames(repoUuid);
-                  // Also fetch the latest frame count
-                  fetchTotalFrames(repoUuid);
-                }} 
-                className="refresh-button"
-                disabled={loading}
-              >
-                {loading ? 'Refreshing...' : '🔄 Refresh'}
-              </button>
-              
-              <button 
-                onClick={async () => {
-                  console.log(`🔍 Manual change check triggered`);
-                  const hasChanges = await checkForChanges(repoUuid);
-                  console.log(`🔍 Manual check result: ${hasChanges ? 'Changes detected' : 'No changes'}`);
-                  if (hasChanges) {
-                    setLastUpdate(new Date());
-                    checkProcessingStatus(repoUuid);
-                    fetchTotalFrames(repoUuid);
-                    loadFrames(repoUuid);
-                  }
-                }} 
-                className="refresh-button"
-                style={{ marginLeft: '10px' }}
-              >
-                🔍 Check Changes
-              </button>
-              
-
-              
-
-            </div>
+            
+            {/* Video Information Display */}
+            {videoInfo && (
+              <div className="video-info">
+                <h3>📹 Video Information</h3>
+                <div className="video-info-grid">
+                  {videoInfo.video && (
+                    <div className="video-info-section">
+                      <h4>🎬 Video Stream</h4>
+                      <div className="info-item">
+                        <span className="label">Resolution:</span>
+                        <span className="value">{videoInfo.video.width} × {videoInfo.video.height}</span>
+                      </div>
+                      <div className="info-item">
+                        <span className="label">Frame Rate:</span>
+                        <span className="value">{videoInfo.video.r_frame_rate}</span>
+                      </div>
+                      <div className="info-item">
+                        <span className="label">Codec:</span>
+                        <span className="value">{videoInfo.video.codec_name}</span>
+                      </div>
+                      {videoInfo.video.bit_rate && (
+                        <div className="info-item">
+                          <span className="label">Bit Rate:</span>
+                          <span className="value">{Math.round(videoInfo.video.bit_rate / 1000)} kbps</span>
+                        </div>
+                      )}
+                      {videoInfo.video.pix_fmt && (
+                        <div className="info-item">
+                          <span className="label">Pixel Format:</span>
+                          <span className="value">{videoInfo.video.pix_fmt}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {videoInfo.audio && videoInfo.audio.codec_name && (
+                    <div className="video-info-section">
+                      <h4>🎵 Audio Stream</h4>
+                      <div className="info-item">
+                        <span className="label">Codec:</span>
+                        <span className="value">{videoInfo.audio.codec_name}</span>
+                      </div>
+                      {videoInfo.audio.sample_rate && (
+                        <div className="info-item">
+                          <span className="label">Sample Rate:</span>
+                          <span className="value">{Math.round(videoInfo.audio.sample_rate / 1000)} kHz</span>
+                        </div>
+                      )}
+                      {videoInfo.audio.channels && (
+                        <div className="info-item">
+                          <span className="label">Channels:</span>
+                          <span className="value">{videoInfo.audio.channels}</span>
+                        </div>
+                      )}
+                      {videoInfo.audio.bit_rate && (
+                        <div className="info-item">
+                          <span className="label">Bit Rate:</span>
+                          <span className="value">{Math.round(videoInfo.audio.bit_rate / 1000)} kbps</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {videoInfo.format && (
+                    <div className="video-info-section">
+                      <h4>📦 Container</h4>
+                      <div className="info-item">
+                        <span className="label">Format:</span>
+                        <span className="value">{videoInfo.format.format_name}</span>
+                      </div>
+                      {videoInfo.format.duration && (
+                        <div className="info-item">
+                          <span className="label">Duration:</span>
+                          <span className="value">{Math.round(videoInfo.format.duration)}s</span>
+                        </div>
+                      )}
+                      {videoInfo.format.bit_rate && (
+                        <div className="info-item">
+                          <span className="label">Total Bit Rate:</span>
+                          <span className="value">{Math.round(videoInfo.format.bit_rate / 1000)} kbps</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="frames-grid">
