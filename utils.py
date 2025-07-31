@@ -413,6 +413,8 @@ def video_get_frames(repo_path: str, frame_numbers: List[float]) -> List[np.ndar
         frames.append(frame)
     return frames
 
+def get_file_modification_time(file_path: List[str]) -> List[float]:
+    return [os.path.getmtime(file_path) for file_path in file_path]
 
 if __name__ == "__main__":
     

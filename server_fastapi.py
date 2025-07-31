@@ -5,7 +5,7 @@ import time
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from utils import video_decompose, video_get_frames_filenames
+from utils import video_decompose, video_get_frames_filenames, get_file_modification_time
 import cv2
 import numpy as np
 from io import BytesIO
@@ -18,7 +18,7 @@ app = FastAPI(title="Frames Viewer")
 # CORS for React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3001"],
+    allow_origins=["http://localhost:3500"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -182,27 +182,51 @@ async def api_video_get_frames_filenames(repo_uuid: str, start: int = 0, end: in
         
         frame_paths = video_get_frames_filenames(repo_path)
         
-        # Convert full paths to just filenames for frontend
-        filenames = []
-        for frame_path in frame_paths:
-            # Extract just the filename from the full path
-            filename = os.path.basename(frame_path)
-            filenames.append(filename)
-        
+        # First extract the relevant indices
         if end is None:
-            return {"frames": filenames[start:]}
+            relevant_paths = frame_paths[start:]
         else:
-            return {"frames": filenames[start:end + 1]}
+            relevant_paths = frame_paths[start:end + 1]
+        
+        # Then convert the relevant paths to just filenames for frontend
+        frames = [os.path.basename(frame_path) for frame_path in relevant_paths]
+
+        return {"frames": frames, "count":len(relevant_paths), "total":len(frame_paths)}
+    
     except Exception as e:
         print(f"Error in frames endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/{repo_uuid}/frames/count")
-async def api_video_get_frame_count(repo_uuid: str):
-    """Get the total number of frames in a repository."""
-    repo_path = os.path.join(STATIC_FOLDER, repo_uuid)
-    frame_numbers = video_get_frames_filenames(repo_path)
-    return {"total": len(frame_numbers)}
+@app.get("/{repo_uuid}/dir_mod_time")
+async def get_directory_modification_time(repo_uuid: str):
+    """Get the directory modification time to detect file changes."""
+    try:
+        repo_path = os.path.join(STATIC_FOLDER, repo_uuid)
+        
+        if not os.path.exists(repo_path):
+            raise HTTPException(status_code=404, detail="Repository not found")
+        
+        dir_mod_time = os.path.getmtime(repo_path)
+        
+        # Debug: Get current file count and list some files
+        import glob
+        frame_pattern = os.path.join(repo_path, "frame_*.jpg")
+        frames = glob.glob(frame_pattern)
+        
+        print(f"🔍 Dir mod time check for {repo_uuid}:")
+        print(f"   📁 Directory: {repo_path}")
+        print(f"   ⏰ Mod time: {dir_mod_time} ({dir_mod_time})")
+        print(f"   📊 Frame count: {len(frames)}")
+        if len(frames) > 0:
+            print(f"   📄 Sample files: {[os.path.basename(f) for f in frames[:3]]}")
+        
+        return {"dir_mod_time": dir_mod_time}
+    
+    except Exception as e:
+        print(f"Error in dir_mod_time endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 
 @app.get("/api/health")
 async def health():
@@ -247,11 +271,11 @@ async def get_processing_status(repo_uuid: str):
 if __name__ == "__main__":
     os.makedirs(FRAMES_FOLDER, exist_ok=True)
     os.makedirs(STATIC_FOLDER, exist_ok=True)
-    print(f"🚀 FastAPI server starting on http://localhost:8000")
+    print(f"🚀 FastAPI server starting on http://localhost:8500")
     print(f"📁 Frames folder: {os.path.abspath(FRAMES_FOLDER)}")
     print(f"📁 Static folder: {os.path.abspath(STATIC_FOLDER)}")
     
     import uvicorn
-    uvicorn.run("server_fastapi:app", host="0.0.0.0", port=8000, reload=True) 
+    uvicorn.run("server_fastapi:app", host="0.0.0.0", port=8500, reload=False) 
 
     

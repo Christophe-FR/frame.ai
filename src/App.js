@@ -140,7 +140,7 @@ function UploadInterface() {
       setIsUploading(false);
     });
 
-    xhr.open('POST', 'http://localhost:8000/upload_video');
+            xhr.open('POST', 'http://localhost:8500/upload_video');
     xhr.timeout = 600000; // 10 minutes
     console.log(`🌐 Sending request to backend...`);
     xhr.send(formData);
@@ -253,12 +253,16 @@ function FrameDisplay() {
   const [lastUpdate, setLastUpdate] = useState(null);
   const [processingStatus, setProcessingStatus] = useState(null);
   const [isProcessing, setIsProcessing] = useState(true);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [lastDirModTime, setLastDirModTime] = useState(null);
+  const [lastKnownFrameCount, setLastKnownFrameCount] = useState(0);
+  const [lastKnownFrameNames, setLastKnownFrameNames] = useState('');
   
   const framesPerPage = 20;
 
   // Memoize the frame cache to avoid unnecessary re-renders
   const frameCache = useMemo(() => new Map(), []);
+
+
 
   // Handle 'pending' case - wait for actual UUID
   useEffect(() => {
@@ -270,7 +274,7 @@ function FrameDisplay() {
 
   const fetchTotalFrames = useCallback(async (uuid) => {
     try {
-      const response = await fetch(`http://localhost:8000/${uuid}/frames/count`);
+      const response = await fetch(`http://localhost:8500/${uuid}/frames?start=0&end=0`);
       if (response.ok) {
         const data = await response.json();
         setTotalFrames(data.total);
@@ -285,7 +289,7 @@ function FrameDisplay() {
     
     try {
       console.log(`🔍 Checking processing status for ${uuid}...`);
-      const response = await fetch(`http://localhost:8000/${uuid}/status`);
+      const response = await fetch(`http://localhost:8500/${uuid}/status`);
       const data = await response.json();
       
       console.log(`📊 Processing status: ${JSON.stringify(data)}`);
@@ -306,7 +310,10 @@ function FrameDisplay() {
   }, []);
 
   const loadFrames = useCallback(async (uuid) => {
-    if (!uuid) return;
+    if (!uuid) {
+      console.log(`❌ loadFrames called with no UUID`);
+      return;
+    }
     
     try {
       console.log(`🖼️ Loading frames for ${uuid}, page ${currentPage}...`);
@@ -317,8 +324,15 @@ function FrameDisplay() {
       const start = (currentPage - 1) * framesPerPage;
       const end = start + framesPerPage - 1;
       
-      const response = await fetch(`http://localhost:8000/${uuid}/frames?start=${start}&end=${end}`);
+      console.log(`📄 Fetching frames from ${start} to ${end}...`);
+      const response = await fetch(`http://localhost:8500/${uuid}/frames?start=${start}&end=${end}`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
       const data = await response.json();
+      console.log(`📊 Response data:`, data);
       
       const loadTime = ((Date.now() - startTime) / 1000).toFixed(2);
       console.log(`✅ Loaded ${data.frames.length} frames in ${loadTime}s`);
@@ -327,23 +341,98 @@ function FrameDisplay() {
       setLoading(false);
       setLastUpdate(new Date());
       
-      // Fetch accurate total frame count from backend
-      try {
-        const countResponse = await fetch(`http://localhost:8000/${uuid}/frames/count`);
-        if (countResponse.ok) {
-          const countData = await countResponse.json();
-          console.log(`📊 Actual total frames from backend: ${countData.total}`);
-          setTotalFrames(countData.total);
-        }
-      } catch (countError) {
-        console.error(`❌ Error fetching frame count: ${countError}`);
-      }
+      // Set baseline frame count and names
+      setLastKnownFrameCount(data.total);
+      setLastKnownFrameNames(data.frames.join(','));
+      
+      // Update total frame count from the response
+      console.log(`📊 Total frames from backend: ${data.total}`);
+      setTotalFrames(data.total);
     } catch (error) {
       console.error(`❌ Error loading frames: ${error}`);
       setError('Failed to load frames: ' + error.message);
       setLoading(false);
     }
   }, [currentPage, framesPerPage]);
+
+  const checkForChanges = useCallback(async (uuid) => {
+    if (!uuid) return false;
+    
+    try {
+      console.log(`🔍 Checking for changes using directory modification time...`);
+      const response = await fetch(`http://localhost:8500/${uuid}/dir_mod_time`);
+      if (response.ok) {
+        const data = await response.json();
+        
+        console.log(`📅 Current dir mod time: ${new Date(data.dir_mod_time).toISOString()}`);
+        console.log(`📅 Last dir mod time: ${lastDirModTime ? new Date(lastDirModTime).toISOString() : 'None'}`);
+        console.log(`📅 Raw values - Current: ${data.dir_mod_time}, Last: ${lastDirModTime}`);
+        
+        // Remove tolerance to catch all changes - even small ones
+        const tolerance = 0; // No tolerance - catch any change
+        
+        if (lastDirModTime && (data.dir_mod_time - lastDirModTime) > tolerance) {
+          console.log(`🔄 Changes detected! Directory mod time: ${new Date(data.dir_mod_time).toISOString()}`);
+          console.log(`🔄 Previous mod time: ${new Date(lastDirModTime).toISOString()}`);
+          console.log(`🔄 Time difference: ${(data.dir_mod_time - lastDirModTime) / 1000}s`);
+          setLastDirModTime(data.dir_mod_time); // Update the baseline
+          return true;
+        } else if (!lastDirModTime) {
+          console.log(`📅 First load - setting baseline directory modification time`);
+          setLastDirModTime(data.dir_mod_time);
+        } else {
+          console.log(`✅ No changes detected (difference: ${(data.dir_mod_time - lastDirModTime) / 1000}s)`);
+        }
+      }
+      
+      // Also check if frame count has changed as a backup detection method
+      console.log(`🔍 Checking frame count as backup detection...`);
+      const framesResponse = await fetch(`http://localhost:8500/${uuid}/frames?start=0&end=0`);
+      if (framesResponse.ok) {
+        const framesData = await framesResponse.json();
+        console.log(`📊 Current total frames: ${framesData.total}, Previous: ${totalFrames}`);
+        
+        if (framesData.total !== lastKnownFrameCount) {
+          console.log(`🔄 Frame count changed! ${lastKnownFrameCount} -> ${framesData.total}`);
+          setLastKnownFrameCount(framesData.total);
+          return true;
+        }
+        
+        // Also check if the current page frames have changed
+        if (frames.length > 0) {
+          const currentPageResponse = await fetch(`http://localhost:8500/${uuid}/frames?start=${(currentPage - 1) * framesPerPage}&end=${(currentPage - 1) * framesPerPage + framesPerPage - 1}`);
+          if (currentPageResponse.ok) {
+            const currentPageData = await currentPageResponse.json();
+            console.log(`🔍 Checking current page frames...`);
+            console.log(`🔍 Current frames: ${frames.length}, New frames: ${currentPageData.frames.length}`);
+            
+            // Check if frame names have changed
+            const currentFrameNames = frames.join(',');
+            const newFrameNames = currentPageData.frames.join(',');
+            
+            if (currentFrameNames !== lastKnownFrameNames) {
+              console.log(`🔄 Frame names changed on current page!`);
+              console.log(`🔍 Old: ${lastKnownFrameNames}`);
+              console.log(`🔍 New: ${newFrameNames}`);
+              setLastKnownFrameNames(newFrameNames);
+              return true;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`❌ Error checking for changes: ${error}`);
+    }
+    return false;
+  }, [lastDirModTime, lastKnownFrameCount, lastKnownFrameNames, currentPage, framesPerPage]);
+
+  // Add a global function to reset baseline (for debugging)
+  useEffect(() => {
+    window.resetBaseline = () => {
+      setLastDirModTime(null);
+      console.log('🔄 Baseline reset - next check will set new baseline');
+    };
+  }, []);
 
   // Pagination functions
   const goToPage = useCallback((page) => {
@@ -364,12 +453,12 @@ function FrameDisplay() {
 
   // Load frames when page changes
   useEffect(() => {
+    console.log(`🎬 useEffect triggered with repoUuid: ${repoUuid}`);
+    console.log(`🎬 Current page: ${currentPage}`);
+    console.log(`🎬 Is processing: ${isProcessing}`);
+    
     if (repoUuid && repoUuid !== 'pending') {
-      console.log(`🎬 useEffect triggered - loading frames for repo: ${repoUuid}`);
-      console.log(`🎬 Current page: ${currentPage}`);
-      console.log(`🎬 Auto-refresh enabled: ${autoRefresh}`);
-      console.log(`🎬 Is processing: ${isProcessing}`);
-      
+      console.log(`🎬 Loading frames for repo: ${repoUuid}`);
       loadFrames(repoUuid);
     } else if (repoUuid === 'pending') {
       console.log(`⏳ Skipping frame load - waiting for actual UUID`);
@@ -382,7 +471,6 @@ function FrameDisplay() {
   useEffect(() => {
     if (repoUuid && repoUuid !== 'pending') {
       console.log(`🔍 useEffect triggered - checking processing status for repo: ${repoUuid}`);
-      console.log(`🔍 Auto-refresh enabled: ${autoRefresh}`);
       console.log(`🔍 Is processing: ${isProcessing}`);
       
       // Check processing status once when component loads
@@ -396,22 +484,34 @@ function FrameDisplay() {
 
   // Auto-refresh functionality
   useEffect(() => {
-    if (repoUuid && repoUuid !== 'pending' && autoRefresh) {
+    if (repoUuid && repoUuid !== 'pending') {
       console.log(`🔄 Auto-refresh useEffect triggered`);
       console.log(`🔄 repoUuid: ${repoUuid}`);
-      console.log(`🔄 autoRefresh: ${autoRefresh}`);
       console.log(`🔄 isProcessing: ${isProcessing}`);
       console.log(`🔄 Setting up auto-refresh interval (5 seconds)`);
       
-      const interval = setInterval(() => {
-        console.log(`🔄 Auto-refresh: checking for new frames...`);
+      const interval = setInterval(async () => {
+        console.log(`🔄 Auto-refresh: checking for changes...`);
         console.log(`🔄 Current time: ${new Date().toISOString()}`);
-        // Check processing status and total frame count
-        checkProcessingStatus(repoUuid);
-        fetchTotalFrames(repoUuid);
-        // Reload frames for current page
-        loadFrames(repoUuid);
-      }, 5000); // Check every 5 seconds
+        console.log(`🔄 repoUuid: ${repoUuid}`);
+        console.log(`🔄 lastDirModTime: ${lastDirModTime ? new Date(lastDirModTime).toISOString() : 'None'}`);
+        
+        // Check for changes using modification times
+        const hasChanges = await checkForChanges(repoUuid);
+        
+        if (hasChanges) {
+          console.log(`🔄 Changes detected! Triggering refresh...`);
+          console.log(`🔄 Updating lastUpdate timestamp...`);
+          setLastUpdate(new Date());
+          // Check processing status and total frame count
+          checkProcessingStatus(repoUuid);
+          fetchTotalFrames(repoUuid);
+          // Reload frames for current page
+          loadFrames(repoUuid);
+        } else {
+          console.log(`✅ No changes detected, skipping refresh`);
+        }
+      }, 2500); // Check every 2.5 seconds
       
       console.log(`🔄 Auto-refresh interval set up successfully`);
       
@@ -422,11 +522,10 @@ function FrameDisplay() {
     } else if (repoUuid === 'pending') {
       console.log(`⏳ Auto-refresh not started - waiting for actual UUID`);
     } else {
-      console.log(`⏸️ Auto-refresh not enabled or no repoUuid`);
+      console.log(`⏸️ Auto-refresh not enabled - no repoUuid`);
       console.log(`⏸️ repoUuid: ${repoUuid}`);
-      console.log(`⏸️ autoRefresh: ${autoRefresh}`);
     }
-  }, [repoUuid, autoRefresh, checkProcessingStatus, loadFrames, fetchTotalFrames]);
+  }, [repoUuid, checkProcessingStatus, loadFrames, fetchTotalFrames, checkForChanges]);
 
   return (
     <div className="app">
@@ -477,18 +576,27 @@ function FrameDisplay() {
                 {loading ? 'Refreshing...' : '🔄 Refresh'}
               </button>
               
-              <div className="auto-refresh-toggle">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={autoRefresh}
-                    onChange={(e) => setAutoRefresh(e.target.checked)}
-                  />
-                  <span className="toggle-label">
-                    {autoRefresh ? '🔄 Auto-refresh ON' : '⏸️ Auto-refresh OFF'}
-                  </span>
-                </label>
-              </div>
+              <button 
+                onClick={async () => {
+                  console.log(`🔍 Manual change check triggered`);
+                  const hasChanges = await checkForChanges(repoUuid);
+                  console.log(`🔍 Manual check result: ${hasChanges ? 'Changes detected' : 'No changes'}`);
+                  if (hasChanges) {
+                    setLastUpdate(new Date());
+                    checkProcessingStatus(repoUuid);
+                    fetchTotalFrames(repoUuid);
+                    loadFrames(repoUuid);
+                  }
+                }} 
+                className="refresh-button"
+                style={{ marginLeft: '10px' }}
+              >
+                🔍 Check Changes
+              </button>
+              
+
+              
+
             </div>
           </div>
 
@@ -496,7 +604,7 @@ function FrameDisplay() {
             {frames.map((framePath, index) => (
               <div key={index} className="frame-container">
                 <img 
-                  src={`http://localhost:8000/static/${repoUuid}/${framePath}`}
+                  src={`http://localhost:8500/static/${repoUuid}/${framePath}`}
                   alt={`Frame ${(currentPage - 1) * framesPerPage + index + 1}`}
                   className="frame-image"
                   loading="lazy"

@@ -34,9 +34,9 @@ sleep 30
 # Check if backend started successfully with multiple retries
 echo "🔍 Checking if backend is ready..."
 for i in {1..10}; do
-    if curl -s http://localhost:8000/api/health > /dev/null; then
-        echo "✅ FastAPI backend is running at http://localhost:8000"
-        echo "📚 API documentation available at http://localhost:8000/docs"
+    if curl -s http://localhost:8500/api/health > /dev/null; then
+    echo "✅ FastAPI backend is running at http://localhost:8500"
+    echo "📚 API documentation available at http://localhost:8500/docs"
         break
     else
         echo "⏳ Still waiting for backend to start... (attempt $i/10)"
@@ -44,7 +44,7 @@ for i in {1..10}; do
     fi
 done
 
-if ! curl -s http://localhost:8000/api/health > /dev/null; then
+if ! curl -s http://localhost:8500/api/health > /dev/null; then
     echo "❌ Error: FastAPI backend failed to start after multiple attempts"
     kill $BACKEND_PID 2>/dev/null
     exit 1
