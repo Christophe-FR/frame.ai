@@ -402,7 +402,7 @@ def video_get_frames_filenames(repo_path: str) -> List[str]:
 
 def video_get_frames_list(repo_path: str) -> List[float]:
     frames_filenames = video_get_frames_filenames(repo_path)
-    frame_numbers = [float(os.path.basename(frames_filename)[6:-4]) for frames_filename in frames_filenames]
+    frame_numbers = extract_numbers_from_filenames(frames_filenames)
     return frame_numbers
 
 def video_get_frames(repo_path: str, frame_numbers: List[float]) -> List[np.ndarray]:
@@ -415,6 +415,10 @@ def video_get_frames(repo_path: str, frame_numbers: List[float]) -> List[np.ndar
 
 def get_file_modification_time(file_path: List[str]) -> List[float]:
     return [os.path.getmtime(file_path) for file_path in file_path]
+
+def extract_numbers_from_filenames(frames_filenames: List[str]) -> List[float]:
+    return [float(os.path.basename(frames_filename)[6:-4]) for frames_filename in frames_filenames]
+
 
 if __name__ == "__main__":
     

@@ -246,6 +246,7 @@ function FrameDisplay() {
   console.log(`🎬 repoUuid from params:`, repoUuid);
   
   const [frames, setFrames] = useState([]);
+  const [frameNumbers, setFrameNumbers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [totalFrames, setTotalFrames] = useState(0);
@@ -351,6 +352,7 @@ function FrameDisplay() {
       console.log(`✅ Loaded ${data.frames.length} frames in ${loadTime}s`);
       
       setFrames(data.frames);
+      setFrameNumbers(data.frame_numbers || []);
       setLoading(false);
       setLastUpdate(new Date());
       
@@ -693,7 +695,7 @@ function FrameDisplay() {
               <div key={index} className="frame-container">
                 <img 
                   src={`http://localhost:8500/static/${repoUuid}/${framePath}`}
-                  alt={`Frame ${(currentPage - 1) * framesPerPage + index + 1}`}
+                  alt={`Frame ${frameNumbers[index] || (currentPage - 1) * framesPerPage + index + 1}`}
                   className="frame-image"
                   loading="lazy"
                   onError={(e) => {
@@ -702,7 +704,7 @@ function FrameDisplay() {
                   }}
                 />
                 <div className="frame-info">
-                  Frame {(currentPage - 1) * framesPerPage + index + 1}
+                  {frameNumbers[index] !== undefined ? frameNumbers[index] : (currentPage - 1) * framesPerPage + index + 1}
                 </div>
               </div>
             ))}

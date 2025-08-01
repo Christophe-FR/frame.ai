@@ -5,7 +5,7 @@ import time
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from utils import video_decompose, video_get_frames_filenames, get_file_modification_time
+from utils import video_decompose, video_get_frames_filenames, get_file_modification_time, extract_numbers_from_filenames
 import cv2
 import numpy as np
 from io import BytesIO
@@ -191,7 +191,9 @@ async def api_video_get_frames_filenames(repo_uuid: str, start: int = 0, end: in
         # Then convert the relevant paths to just filenames for frontend
         frames = [os.path.basename(frame_path) for frame_path in relevant_paths]
 
-        return {"frames": frames, "count":len(relevant_paths), "total":len(frame_paths)}
+        frame_numbers = extract_numbers_from_filenames(relevant_paths)
+
+        return {"frames": frames, "frame_numbers": frame_numbers, "count":len(relevant_paths), "total":len(frame_paths)}
     
     except Exception as e:
         print(f"Error in frames endpoint: {e}")
