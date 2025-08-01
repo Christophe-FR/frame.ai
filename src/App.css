@@ -358,6 +358,49 @@ body {
   box-shadow: 0 4px 8px rgba(0,0,0,0.15);
 }
 
+.frame-container.selected {
+  border: 3px solid #007bff;
+  box-shadow: 0 4px 12px rgba(0,123,255,0.3);
+  transform: translateY(-2px);
+}
+
+.frame-container.selected:hover {
+  box-shadow: 0 6px 16px rgba(0,123,255,0.4);
+}
+
+.selected-frames-container {
+  background: white;
+  border-radius: 8px;
+  padding: 20px;
+  margin: 20px 0;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.selected-frames-container h3 {
+  color: #333;
+  margin-bottom: 15px;
+  font-size: 1.2rem;
+}
+
+.selected-frames-textbox {
+  width: 100%;
+  padding: 12px;
+  border: 2px solid #e9ecef;
+  border-radius: 6px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  resize: vertical;
+  background: #f8f9fa;
+  color: #333;
+}
+
+.selected-frames-textbox:focus {
+  outline: none;
+  border-color: #007bff;
+  background: white;
+}
+
 .frame-image {
   width: 100%;
   height: 150px;

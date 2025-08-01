@@ -247,6 +247,7 @@ function FrameDisplay() {
   
   const [frames, setFrames] = useState([]);
   const [frameNumbers, setFrameNumbers] = useState([]);
+  const [selectedFrames, setSelectedFrames] = useState(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [totalFrames, setTotalFrames] = useState(0);
@@ -263,6 +264,24 @@ function FrameDisplay() {
 
   // Memoize the frame cache to avoid unnecessary re-renders
   const frameCache = useMemo(() => new Map(), []);
+
+  // Handle frame selection
+  const toggleFrameSelection = useCallback((frameNumber) => {
+    setSelectedFrames(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(frameNumber)) {
+        newSet.delete(frameNumber);
+      } else {
+        newSet.add(frameNumber);
+      }
+      return newSet;
+    });
+  }, []);
+
+  // Get selected frame numbers as sorted array
+  const selectedFrameNumbers = useMemo(() => {
+    return Array.from(selectedFrames).sort((a, b) => a - b);
+  }, [selectedFrames]);
 
 
 
@@ -690,24 +709,57 @@ function FrameDisplay() {
             )}
           </div>
 
-          <div className="frames-grid">
-            {frames.map((framePath, index) => (
-              <div key={index} className="frame-container">
-                <img 
-                  src={`http://localhost:8500/static/${repoUuid}/${framePath}`}
-                  alt={`Frame ${frameNumbers[index] || (currentPage - 1) * framesPerPage + index + 1}`}
-                  className="frame-image"
-                  loading="lazy"
-                  onError={(e) => {
-                    console.error(`Failed to load image: ${framePath}`);
-                    e.target.style.display = 'none';
-                  }}
-                />
-                <div className="frame-info">
-                  {frameNumbers[index] !== undefined ? frameNumbers[index] : (currentPage - 1) * framesPerPage + index + 1}
-                </div>
+          {/* Selected Frames Display */}
+          {selectedFrameNumbers.length > 0 && (
+            <div className="selected-frames-container">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                <h3>Selected Frame Numbers:</h3>
+                <button 
+                  onClick={() => setSelectedFrames(new Set())}
+                  className="page-button"
+                  style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                >
+                  Clear All
+                </button>
               </div>
-            ))}
+              <textarea 
+                value={selectedFrameNumbers.join(', ')}
+                readOnly
+                className="selected-frames-textbox"
+                rows={3}
+                placeholder="Selected frame numbers will appear here..."
+              />
+            </div>
+          )}
+
+          <div className="frames-grid">
+            {frames.map((framePath, index) => {
+              const frameNumber = frameNumbers[index] !== undefined ? frameNumbers[index] : (currentPage - 1) * framesPerPage + index + 1;
+              const isSelected = selectedFrames.has(frameNumber);
+              
+              return (
+                <div 
+                  key={index} 
+                  className={`frame-container ${isSelected ? 'selected' : ''}`}
+                  onClick={() => toggleFrameSelection(frameNumber)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <img 
+                    src={`http://localhost:8500/static/${repoUuid}/${framePath}`}
+                    alt={`Frame ${frameNumber}`}
+                    className="frame-image"
+                    loading="lazy"
+                    onError={(e) => {
+                      console.error(`Failed to load image: ${framePath}`);
+                      e.target.style.display = 'none';
+                    }}
+                  />
+                  <div className="frame-info">
+                    {frameNumber}
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           {totalFrames > framesPerPage && (
