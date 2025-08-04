@@ -368,37 +368,202 @@ body {
   box-shadow: 0 6px 16px rgba(0,123,255,0.4);
 }
 
-.selected-frames-container {
-  background: white;
-  border-radius: 8px;
-  padding: 20px;
-  margin: 20px 0;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+.selected-frames-banner {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: rgba(0, 123, 255, 0.95);
+  color: white;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 8px 32px rgba(0, 123, 255, 0.3);
+  backdrop-filter: blur(10px);
+  z-index: 1000;
+  max-width: 400px;
+  min-width: 300px;
+  animation: slideInUp 0.3s ease-out;
 }
 
-.selected-frames-container h3 {
-  color: #333;
-  margin-bottom: 15px;
-  font-size: 1.2rem;
+@keyframes slideInUp {
+  from {
+    transform: translateY(100px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
-.selected-frames-textbox {
-  width: 100%;
-  padding: 12px;
-  border: 2px solid #e9ecef;
+.banner-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.banner-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.banner-toggle-btn {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 10px;
+  transition: background 0.2s;
+}
+
+.banner-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.banner-download-btn {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.2s;
+}
+
+.banner-download-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.banner-download-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.selected-frames-banner.collapsed {
+  padding: 12px 16px;
+}
+
+.banner-run-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  display: flex;
+  justify-content: center;
+}
+
+.banner-run-btn {
+  background: rgba(40, 167, 69, 0.9);
+  color: white;
+  border: none;
   border-radius: 6px;
-  font-family: 'Courier New', monospace;
+  padding: 8px 24px;
   font-size: 0.9rem;
-  line-height: 1.4;
-  resize: vertical;
-  background: #f8f9fa;
-  color: #333;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
-.selected-frames-textbox:focus {
+.banner-run-btn:hover {
+  background: rgba(40, 167, 69, 1);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(40, 167, 69, 0.4);
+}
+
+.banner-run-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(40, 167, 69, 0.3);
+}
+
+.banner-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: white;
+}
+
+.banner-clear-btn {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.2s;
+}
+
+.banner-clear-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.banner-content {
+  font-family: 'Courier New', monospace;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  word-break: break-all;
+  color: rgba(255, 255, 255, 0.9);
+  max-height: 120px;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+.banner-textarea {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  color: white;
+  font-family: 'Courier New', monospace;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  padding: 8px;
+  resize: vertical;
+  min-height: 60px;
   outline: none;
-  border-color: #007bff;
-  background: white;
+}
+
+.banner-textarea:focus {
+  border-color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.banner-textarea::placeholder {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.banner-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.banner-content::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+.banner-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+}
+
+.banner-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.5);
 }
 
 .frame-image {

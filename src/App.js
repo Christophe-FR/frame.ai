@@ -248,6 +248,7 @@ function FrameDisplay() {
   const [frames, setFrames] = useState([]);
   const [frameNumbers, setFrameNumbers] = useState([]);
   const [selectedFrames, setSelectedFrames] = useState(new Set());
+  const [bannerCollapsed, setBannerCollapsed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [totalFrames, setTotalFrames] = useState(0);
@@ -709,26 +710,90 @@ function FrameDisplay() {
             )}
           </div>
 
-          {/* Selected Frames Display */}
+          {/* Selected Frames Banner - Bottom Right Corner */}
           {selectedFrameNumbers.length > 0 && (
-            <div className="selected-frames-container">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                <h3>Selected Frame Numbers:</h3>
+            <div className={`selected-frames-banner ${bannerCollapsed ? 'collapsed' : ''}`}>
+              <div className="banner-header">
+                <span className="banner-title">Selected Frames: {selectedFrameNumbers.length}</span>
+                <div className="banner-controls">
+                  <button 
+                    onClick={() => setBannerCollapsed(!bannerCollapsed)}
+                    className="banner-toggle-btn"
+                    title={bannerCollapsed ? "Expand banner" : "Collapse banner"}
+                  >
+                    {bannerCollapsed ? '▼' : '▲'}
+                  </button>
+                  <button 
+                    onClick={(event) => {
+                      if (selectedFrameNumbers.length > 0) {
+                        const blob = new Blob([selectedFrameNumbers.join('\n')], { type: 'text/plain' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `selected_frames_${repoUuid}.txt`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        
+                        // Show brief success feedback
+                        const btn = event.target;
+                        const originalText = btn.innerHTML;
+                        btn.innerHTML = '✓';
+                        btn.style.background = 'rgba(40, 167, 69, 0.8)';
+                        setTimeout(() => {
+                          btn.innerHTML = originalText;
+                          btn.style.background = '';
+                        }, 1000);
+                      }
+                    }}
+                    className="banner-download-btn"
+                    title="Download selected frame numbers"
+                    disabled={selectedFrameNumbers.length === 0}
+                  >
+                    📥
+                  </button>
+                  <button 
+                    onClick={() => setSelectedFrames(new Set())}
+                    className="banner-clear-btn"
+                    title="Clear all selections"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+              {!bannerCollapsed && (
+                <div className="banner-content">
+                  <textarea
+                    value={selectedFrameNumbers.join(', ')}
+                    onChange={(e) => {
+                      const input = e.target.value;
+                      const numbers = input.split(',').map(s => s.trim()).filter(s => s !== '');
+                      const validNumbers = numbers.map(n => {
+                        const num = parseFloat(n);
+                        return isNaN(num) ? null : num;
+                      }).filter(n => n !== null);
+                      setSelectedFrames(new Set(validNumbers));
+                    }}
+                    className="banner-textarea"
+                    placeholder="Enter frame numbers separated by commas..."
+                    rows={3}
+                  />
+                </div>
+              )}
+              <div className="banner-run-section">
                 <button 
-                  onClick={() => setSelectedFrames(new Set())}
-                  className="page-button"
-                  style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                  onClick={() => {
+                    console.log('Run button clicked with frames:', selectedFrameNumbers);
+                    // TODO: Implement run functionality
+                    alert(`Processing ${selectedFrameNumbers.length} selected frames: ${selectedFrameNumbers.join(', ')}`);
+                  }}
+                  className="banner-run-btn"
+                  title="Run processing on selected frames"
                 >
-                  Clear All
+                  Run
                 </button>
               </div>
-              <textarea 
-                value={selectedFrameNumbers.join(', ')}
-                readOnly
-                className="selected-frames-textbox"
-                rows={3}
-                placeholder="Selected frame numbers will appear here..."
-              />
             </div>
           )}
 
