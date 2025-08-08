@@ -140,7 +140,7 @@ function UploadInterface() {
       setIsUploading(false);
     });
 
-            xhr.open('POST', 'http://localhost:8500/upload_video');
+            xhr.open('POST', 'http://localhost:8500/video_upload');
     xhr.timeout = 600000; // 10 minutes
     console.log(`🌐 Sending request to backend...`);
     xhr.send(formData);

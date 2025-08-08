@@ -5,7 +5,7 @@ import time
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from utils import video_decompose, _video_get_frames_filenames, get_file_modification_time, _extract_numbers_from_frames
+from utils import video_decompose, _video_get_frames_filenames, get_file_modification_time, _extract_numbers_from_frames, video_create_repo
 import cv2
 import numpy as np
 from io import BytesIO
@@ -33,17 +33,15 @@ ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff'}
 # Mount static files for direct image access
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-@app.post("/upload_video")
+@app.post("/video_upload")
 async def upload_video(file: UploadFile = File(...)):
     request_start = time.time()
     print(f"🚀 Upload request received at {time.strftime('%H:%M:%S')}")
     print(f"📁 File details: name={file.filename}, size={file.size if file.size else 'unknown'}")
     
     try:
-        # Generate a new UUID for this upload
-        repo_uuid = str(uuid.uuid4())
-        repo_path = os.path.join(STATIC_FOLDER, repo_uuid)
-        os.makedirs(repo_path, exist_ok=True)
+        # Generate a new repository using utils function
+        repo_uuid, repo_path = video_create_repo()
 
         print(f"📁 Created repository: {repo_path}")
         print(f"🎯 Generated UUID: {repo_uuid}")
@@ -127,49 +125,6 @@ async def upload_video(file: UploadFile = File(...)):
         print(f"❌ Error in upload_video after {total_time:.2f}s: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/get_upload_path")
-async def get_upload_path():
-    """Get a file path for direct upload."""
-    # Generate a new UUID for this upload
-    repo_uuid = str(uuid.uuid4())
-    repo_path = os.path.join(STATIC_FOLDER, repo_uuid)
-    os.makedirs(repo_path, exist_ok=True)
-    
-    # Return the path where the frontend should write the file
-    return {
-        "uuid": repo_uuid,
-        "upload_path": repo_path,
-        "video_path": os.path.join(repo_path, "input_video.mp4")
-    }
-
-@app.post("/start_processing/{repo_uuid}")
-async def start_processing(repo_uuid: str):
-    """Start video processing for a file that was uploaded directly."""
-    repo_path = os.path.join(STATIC_FOLDER, repo_uuid)
-    video_path = os.path.join(repo_path, "input_video.mp4")
-    
-    if not os.path.exists(video_path):
-        raise HTTPException(status_code=404, detail="Video file not found")
-    
-    # Start video decomposition in background
-    def process_video():
-        try:
-            # Check if file exists and has content
-            if os.path.exists(video_path) and os.path.getsize(video_path) > 0:
-                video_decompose(video_path, repo_path)
-                print(f"✅ Video decomposition completed for {repo_uuid}")
-            else:
-                print(f"❌ Video file is empty or doesn't exist for {repo_uuid}")
-        except Exception as e:
-            print(f"❌ Video decomposition failed for {repo_uuid}: {e}")
-    
-    # Run in background thread
-    import threading
-    thread = threading.Thread(target=process_video)
-    thread.daemon = True
-    thread.start()
-    
-    return {"uuid": repo_uuid, "status": "processing_started"}
 
 
 @app.get("/{repo_uuid}/frames") # example: http://localhost:8000/2afaa5d5-b243-41d7-a7a8-efa21083d290/frames?start=5&end=10
@@ -272,6 +227,19 @@ async def get_processing_status(repo_uuid: str):
     
     return status_data
 
+@app.post("/get_upload_path")
+async def get_upload_path():
+    """Get a file path for direct upload."""
+    # Generate a new repository using utils function
+    repo_uuid, repo_path = video_create_repo()
+    
+    # Return the path where the frontend should write the file
+    return {
+        "uuid": repo_uuid,
+        "upload_path": repo_path,
+        "video_path": os.path.join(repo_path, "input_video.mp4")
+    }
+
 if __name__ == "__main__":
     os.makedirs(FRAMES_FOLDER, exist_ok=True)
     os.makedirs(STATIC_FOLDER, exist_ok=True)
@@ -280,6 +248,4 @@ if __name__ == "__main__":
     print(f"📁 Static folder: {os.path.abspath(STATIC_FOLDER)}")
     
     import uvicorn
-    uvicorn.run("server_fastapi:app", host="0.0.0.0", port=8500, reload=False) 
-
-    
+    uvicorn.run("server_fastapi:app", host="0.0.0.0", port=8500, reload=False)
