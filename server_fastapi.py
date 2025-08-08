@@ -5,7 +5,7 @@ import time
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from utils import video_decompose, video_get_frames_filenames, get_file_modification_time, extract_numbers_from_filenames
+from utils import video_decompose, _video_get_frames_filenames, get_file_modification_time, _extract_numbers_from_frames
 import cv2
 import numpy as np
 from io import BytesIO
@@ -173,14 +173,14 @@ async def start_processing(repo_uuid: str):
 
 
 @app.get("/{repo_uuid}/frames") # example: http://localhost:8000/2afaa5d5-b243-41d7-a7a8-efa21083d290/frames?start=5&end=10
-async def api_video_get_frames_filenames(repo_uuid: str, start: int = 0, end: int = None):
+async def api__video_get_frames_filenames(repo_uuid: str, start: int = 0, end: int = None):
     try:
         repo_path = os.path.join(STATIC_FOLDER, repo_uuid)
         
         if not os.path.exists(repo_path):
             raise HTTPException(status_code=404, detail="Repository not found")
         
-        frame_paths = video_get_frames_filenames(repo_path)
+        frame_paths = _video_get_frames_filenames(repo_path)
         
         # First extract the relevant indices
         if end is None:
@@ -191,7 +191,7 @@ async def api_video_get_frames_filenames(repo_uuid: str, start: int = 0, end: in
         # Then convert the relevant paths to just filenames for frontend
         frames = [os.path.basename(frame_path) for frame_path in relevant_paths]
 
-        frame_numbers = extract_numbers_from_filenames(relevant_paths)
+        frame_numbers = _extract_numbers_from_frames(relevant_paths)
 
         return {"frames": frames, "frame_numbers": frame_numbers, "count":len(relevant_paths), "total":len(frame_paths)}
     

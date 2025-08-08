@@ -809,17 +809,17 @@ function FrameDisplay() {
                   onClick={() => toggleFrameSelection(frameNumber)}
                   style={{ cursor: 'pointer' }}
                 >
-                  <img 
-                    src={`http://localhost:8500/static/${repoUuid}/${framePath}`}
+                <img 
+                  src={`http://localhost:8500/static/${repoUuid}/${framePath}`}
                     alt={`Frame ${frameNumber}`}
-                    className="frame-image"
-                    loading="lazy"
-                    onError={(e) => {
-                      console.error(`Failed to load image: ${framePath}`);
-                      e.target.style.display = 'none';
-                    }}
-                  />
-                  <div className="frame-info">
+                  className="frame-image"
+                  loading="lazy"
+                  onError={(e) => {
+                    console.error(`Failed to load image: ${framePath}`);
+                    e.target.style.display = 'none';
+                  }}
+                />
+                <div className="frame-info">
                     {frameNumber}
                   </div>
                 </div>

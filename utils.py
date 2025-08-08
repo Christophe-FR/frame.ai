@@ -4,14 +4,14 @@ import os
 import logging
 import subprocess
 import glob
-
+import uuid
 import tensorflow as tf
 import tensorflow_hub as hub
 from typing import Dict, Any, List, Tuple, Union
 import json
 
 
-def configure_gpu():
+def _configure_gpu():
     """Configure GPU memory growth to prevent memory issues."""
     gpus = tf.config.experimental.list_physical_devices('GPU')
     if gpus:
@@ -24,7 +24,7 @@ def configure_gpu():
     else:
         logging.info("No GPU devices found, using CPU")
 
-def setup_tensorflow():
+def _setup_tensorflow():
     # Suppress TensorFlow logging
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # 0=all, 1=no INFO, 2=no INFO/WARN, 3=no INFO/WARN/ERROR
 
@@ -36,7 +36,7 @@ def setup_tensorflow():
     logger.info(f"Available devices: {tf.config.list_physical_devices()}")
     
     # Configure GPU
-    configure_gpu()
+    _configure_gpu()
     
     # Set cache directory for TensorFlow Hub
     cache_dir = os.path.join(os.getcwd(), 'tfhub_cache')
@@ -44,7 +44,7 @@ def setup_tensorflow():
     os.makedirs(cache_dir, exist_ok=True)
     logger.info(f"TFHub cache directory: {cache_dir}")
 
-def load_model():
+def _load_model():
     """Load the FILM model from TensorFlow Hub."""
     logger = logging.getLogger(__name__)
     
@@ -58,26 +58,26 @@ def load_model():
         raise
 
 #INITIALIZATION
-setup_tensorflow()
-model = load_model()
+_setup_tensorflow()
+model = _load_model()
 
 #RAM OPERATIONS
-def load_frame(path: str) -> np.ndarray:
+def _load_frame(path: str) -> np.ndarray:
     """Load a frame from disk and convert to RGB."""
     frame = cv2.imread(path)
     if frame is None:
         raise FileNotFoundError(f"Could not load image: {path}")
     return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-def normalize(frame: np.ndarray) -> np.ndarray:
+def _normalize(frame: np.ndarray) -> np.ndarray:
     """Convert frame to float32 in [0, 1] range."""
     return tf.cast(frame, tf.float32).numpy() / 255.0
 
-def denormalize(frame: np.ndarray) -> np.ndarray:
+def _denormalize(frame: np.ndarray) -> np.ndarray:
     """Convert frame from float [0, 1] to uint8 [0, 255]."""
     return (np.clip(frame, 0, 1) * 255).astype(np.uint8)
 
-def downsample(frame: np.ndarray, max_width: int = 2048, max_height: int = 1080) -> tuple:
+def _downsample(frame: np.ndarray, max_width: int = 2048, max_height: int = 1080) -> tuple:
     """Resize frame if it exceeds maximum dimensions while maintaining aspect ratio.
     
     Args:
@@ -104,7 +104,7 @@ def downsample(frame: np.ndarray, max_width: int = 2048, max_height: int = 1080)
     resized = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
     return resized, original_shape
 
-def upsample(frame: np.ndarray, original_shape: tuple) -> np.ndarray:
+def _upsample(frame: np.ndarray, original_shape: tuple) -> np.ndarray:
     """Restore frame to its original size.
     
     Args:
@@ -128,12 +128,12 @@ def interpolate_frames_at_times(frame1: np.ndarray, frame2: np.ndarray, times: L
         List of interpolated frames as numpy arrays (RGB uint8)
     """
     # Resize frames if needed
-    frame1_resized, original_shape = downsample(frame1)
-    frame2_resized, _ = downsample(frame2)
+    frame1_resized, original_shape = _downsample(frame1)
+    frame2_resized, _ = _downsample(frame2)
     
     # Normalize frames
-    frame1_norm = normalize(frame1_resized)
-    frame2_norm = normalize(frame2_resized)
+    frame1_norm = _normalize(frame1_resized)
+    frame2_norm = _normalize(frame2_resized)
     
     interpolated = []
     
@@ -145,28 +145,18 @@ def interpolate_frames_at_times(frame1: np.ndarray, frame2: np.ndarray, times: L
         }
         result = model(input_dict)
         interpolated_frame = result["image"][0].numpy()
-        interpolated.append(upsample(denormalize(interpolated_frame), original_shape))
+        interpolated.append(_upsample(_denormalize(interpolated_frame), original_shape))
     
     return interpolated
 
 def interpolate_frames(frame1: np.ndarray, frame2: np.ndarray, num_frames: int = 1) -> List[np.ndarray]:
-    """Interpolate frames using FILM model.
-
-    Args:
-        frame1: First frame
-        frame2: Second frame
-        num_frames: Number of in-between frames to generate (default: 1)
-
-    Returns:
-        List of interpolated frames as numpy arrays (RGB uint8)
-    """
     # Calculate evenly spaced times
     times = [i / (num_frames + 1) for i in range(1, num_frames + 1)]
     
     # Use interpolate_frames_at_times to do the actual work
     return interpolate_frames_at_times(frame1, frame2, times)
 
-def save_frames(frames: List[np.ndarray], filenames: List[str], root_folder: str = "", extension: str = "") -> List[str]:
+def _save_frames(frames: List[np.ndarray], filenames: List[str], root_folder: str = "", extension: str = "") -> List[str]:
     """Save frames to disk with custom filenames and paths."""
     if len(frames) > len(filenames):
         raise ValueError(f"Not enough filenames: {len(frames)} frames but only {len(filenames)} filenames provided")
@@ -188,26 +178,79 @@ def save_frames(frames: List[np.ndarray], filenames: List[str], root_folder: str
     return saved_paths
 
 #DISK OPERATIONS
-def video_extract_frames(video_path: str, repo_path: str) -> None:
+
+def video_create_repo() -> Tuple[str, str]:
+    STATIC_FOLDER = "static"
+    repo_uuid = str(uuid.uuid4())
+    repo_path = os.path.join(STATIC_FOLDER, repo_uuid)
+    os.makedirs(repo_path, exist_ok=True)
+    return repo_uuid, repo_path
+
+def _video_extract_frames(video_path: str, repo_path: str) -> None:
     """Extract frames from video."""
     output_pattern = os.path.join(repo_path, "frame_%06d.jpg")
-    subprocess.run(['ffmpeg', '-i', video_path, '-q:v', '1', '-y', output_pattern], capture_output=True, check=True)
-    for frame_path in glob.glob(os.path.join(repo_path, "frame_*.jpg")):
-        if '.' not in os.path.basename(frame_path)[6:-4]:
-            os.rename(frame_path, frame_path.replace('.jpg', '.000.jpg'))
+    
+    cmd = ['ffmpeg', '-i', video_path, '-q:v', '1', '-y', '-nostdin', output_pattern]
+    
+    try:
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+        stdout, stderr = process.communicate(timeout=60)  # 60 second timeout
+        
+        if process.returncode != 0:
+            raise subprocess.CalledProcessError(process.returncode, cmd, stdout, stderr)
+        
+        # Rename frames with decimal points
+        frame_count = 0
+        for frame_path in glob.glob(os.path.join(repo_path, "frame_*.jpg")):
+            if '.' not in os.path.basename(frame_path)[6:-4]:
+                new_path = frame_path.replace('.jpg', '.000.jpg')
+                os.rename(frame_path, new_path)
+                frame_count += 1
+        
+    except subprocess.TimeoutExpired:
+        print(f"❌ Frame extraction timed out")
+        process.kill()
+        process.wait()
+        raise subprocess.TimeoutExpired(cmd, 60)
+    except Exception as e:
+        print(f"❌ Frame extraction failed: {e}")
+        raise
 
-def video_extract_audio(video_path: str, repo_path: str) -> None:
+def _video_extract_audio(video_path: str, repo_path: str) -> None:
     """Extract audio from video with original sample rate."""
     audio_path = os.path.join(repo_path, "audio.wav")
     
     # Get original sample rate from video
     sample_rate_cmd = ['ffprobe', '-v', 'error', '-select_streams', 'a:0', '-show_entries', 'stream=sample_rate', '-of', 'csv=p=0', video_path]
-    sample_rate = subprocess.run(sample_rate_cmd, capture_output=True, check=True, text=True).stdout.strip()
     
-    cmd = ['ffmpeg', '-i', video_path, '-vn', '-acodec', 'pcm_s16le', '-ar', sample_rate, '-ac', '2', '-y', audio_path]
-    subprocess.run(cmd, capture_output=True, check=True)
+    try:
+        sample_rate_process = subprocess.Popen(sample_rate_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        sample_rate_stdout, sample_rate_stderr = sample_rate_process.communicate(timeout=30)  # 30 second timeout
+        
+        if sample_rate_process.returncode != 0:
+            raise subprocess.CalledProcessError(sample_rate_process.returncode, sample_rate_cmd)
+        
+        sample_rate = sample_rate_stdout.strip()
+        
+        cmd = ['ffmpeg', '-i', video_path, '-vn', '-acodec', 'pcm_s16le', '-ar', sample_rate, '-ac', '2', '-y', '-nostdin', audio_path]
+        
+        audio_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+        audio_stdout, audio_stderr = audio_process.communicate(timeout=60)  # 60 second timeout
+        
+        if audio_process.returncode != 0:
+            raise subprocess.CalledProcessError(audio_process.returncode, cmd, audio_stdout, audio_stderr)
+        
+    except subprocess.TimeoutExpired:
+        print(f"❌ Audio extraction timed out")
+        if 'audio_process' in locals():
+            audio_process.kill()
+            audio_process.wait()
+        raise subprocess.TimeoutExpired(cmd, 60)
+    except Exception as e:
+        print(f"❌ Audio extraction failed: {e}")
+        raise
 
-def video_extract_metadata(video_path: str, repo_path: str) -> None:
+def _video_extract_metadata(video_path: str, repo_path: str) -> None:
     """Extract comprehensive video metadata."""
     import json
     
@@ -226,29 +269,71 @@ def video_extract_metadata(video_path: str, repo_path: str) -> None:
                   '-show_entries', 'format=format_name,duration,bit_rate,start_time',
                   '-of', 'json', video_path]
     
-    video_info = json.loads(subprocess.run(video_cmd, capture_output=True, check=True, text=True).stdout)
-    audio_info = json.loads(subprocess.run(audio_cmd, capture_output=True, check=True, text=True).stdout)
-    format_info = json.loads(subprocess.run(format_cmd, capture_output=True, check=True, text=True).stdout)
-    
-    # Combine all metadata
-    metadata = {
-        'video': video_info.get('streams', [{}])[0] if video_info.get('streams') else {},
-        'audio': audio_info.get('streams', [{}])[0] if audio_info.get('streams') else {},
-        'format': format_info.get('format', {})
-    }
-    
-    metadata_path = os.path.join(repo_path, "video_info.json")
-    with open(metadata_path, 'w') as f:
-        json.dump(metadata, f, indent=2)
+    try:
+        # Get video info
+        video_process = subprocess.Popen(video_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        video_stdout, video_stderr = video_process.communicate(timeout=30)  # 30 second timeout
+        
+        if video_process.returncode != 0:
+            raise subprocess.CalledProcessError(video_process.returncode, video_cmd)
+        
+        video_info = json.loads(video_stdout)
+        
+        # Get audio info
+        audio_process = subprocess.Popen(audio_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        audio_stdout, audio_stderr = audio_process.communicate(timeout=30)  # 30 second timeout
+        
+        if audio_process.returncode != 0:
+            raise subprocess.CalledProcessError(audio_process.returncode, audio_cmd)
+        
+        audio_info = json.loads(audio_stdout)
+        
+        # Get format info
+        format_process = subprocess.Popen(format_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        format_stdout, format_stderr = format_process.communicate(timeout=30)  # 30 second timeout
+        
+        if format_process.returncode != 0:
+            raise subprocess.CalledProcessError(format_process.returncode, format_cmd)
+        
+        format_info = json.loads(format_stdout)
+        
+        # Combine all metadata
+        metadata = {
+            'video': video_info.get('streams', [{}])[0] if video_info.get('streams') else {},
+            'audio': audio_info.get('streams', [{}])[0] if audio_info.get('streams') else {},
+            'format': format_info.get('format', {})
+        }
+        
+        metadata_path = os.path.join(repo_path, "video_info.json")
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+    except subprocess.TimeoutExpired:
+        print(f"❌ Metadata extraction timed out")
+        # Kill any running processes
+        for process_name in ['video_process', 'audio_process', 'format_process']:
+            if process_name in locals():
+                locals()[process_name].kill()
+                locals()[process_name].wait()
+        raise subprocess.TimeoutExpired("metadata extraction", 30)
+    except Exception as e:
+        print(f"❌ Metadata extraction failed: {e}")
+        raise
 
 def video_decompose(video_path: str, repo_path: str) -> None:
     """Decompose video into frames, audio, and metadata."""
+    print(f"🎬 Starting video decomposition...")
+    
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video not found: {video_path}")
+    
     os.makedirs(repo_path, exist_ok=True)
-    video_extract_metadata(video_path, repo_path)
-    video_extract_audio(video_path, repo_path)
-    video_extract_frames(video_path, repo_path)
+    
+    _video_extract_metadata(video_path, repo_path)
+    _video_extract_audio(video_path, repo_path)
+    _video_extract_frames(video_path, repo_path)
+    
+    print(f"✅ Video decomposition completed")
 
 def video_recompose(repo_path: str, output_video_path: str) -> None:
     """Recompose video using original metadata."""
@@ -308,7 +393,7 @@ def video_recompose(repo_path: str, output_video_path: str) -> None:
     subprocess.run(cmd, capture_output=True, check=True)
     #os.remove(file_list)
 
-def video_schedule_interpolation(repo_path: str, targets: List[float]):
+def _video_schedule_interpolation(repo_path: str, targets: List[float]):
     anchors = video_get_frames_list(repo_path)
     anchors = set(anchors)
     targets = set(targets)
@@ -354,7 +439,7 @@ def video_schedule_interpolation(repo_path: str, targets: List[float]):
     return result
 
 def video_interpolate_frames(repo_path: str, targets: List[float]):
-    schedule = video_schedule_interpolation(repo_path, targets)
+    schedule = _video_schedule_interpolation(repo_path, targets)
     for target, a, b in schedule:
         # Handle frame indices for both input and output
         # Use format to match actual frame names: frame_XXXXXX.000.jpg
@@ -366,13 +451,13 @@ def video_interpolate_frames(repo_path: str, targets: List[float]):
         print(f"Interpolating frame {target:.3f} between {a:.3f} and {b:.3f} at time t={time:.3f}")
         
         # Load frames and interpolate
-        frame1 = load_frame(frame1_path)
-        frame2 = load_frame(frame2_path)
+        frame1 = _load_frame(frame1_path)
+        frame2 = _load_frame(frame2_path)
         frames = interpolate_frames_at_times(frame1, frame2, [time])
         
         # Save interpolated frames
         output_path = os.path.join(repo_path, f"frame_{target:010.3f}.jpg")
-        save_frames(frames, [output_path])
+        _save_frames(frames, [output_path])
 
 def video_copy_frames(repo_path: str, source: float, target: float) -> None:
     """Copy a frame from source_index to target_index in a repo.
@@ -393,31 +478,29 @@ def video_copy_frames(repo_path: str, source: float, target: float) -> None:
     shutil.copy2(source_path, target_path)
     print(f"Copied frame_{source:010.3f}.jpg to frame_{target:010.3f}.jpg")
 
-def video_get_frames_filenames(repo_path: str) -> List[str]:
+def _video_get_frames_filenames(repo_path: str) -> List[str]:
     if not os.path.exists(repo_path):
         return []
     frame_pattern = os.path.join(repo_path, "frame_*.jpg")
     frames_filenames = glob.glob(frame_pattern)
     return sorted(frames_filenames)
 
-def video_get_frames_list(repo_path: str) -> List[float]:
-    frames_filenames = video_get_frames_filenames(repo_path)
-    frame_numbers = extract_numbers_from_filenames(frames_filenames)
-    return frame_numbers
+def video_get_frames_list(repo_path: str, include_filenames: bool = False) -> List[float]:
+    frames_filenames = _video_get_frames_filenames(repo_path)
+    frame_numbers = _extract_numbers_from_frames(frames_filenames)
+    if include_filenames:
+        return frame_numbers, frames_filenames
+    else:
+        return frame_numbers
 
-def video_get_frames(repo_path: str, frame_numbers: List[float]) -> List[np.ndarray]:
-    frames = []
-    for frame_number in frame_numbers:
-        frame_path = os.path.join(repo_path, f"frame_{frame_number:010.3f}.jpg")
-        frame = load_frame(frame_path)
-        frames.append(frame)
-    return frames
 
+#GENERICDISK MANAGEMENT
 def get_file_modification_time(file_path: List[str]) -> List[float]:
     return [os.path.getmtime(file_path) for file_path in file_path]
 
-def extract_numbers_from_filenames(frames_filenames: List[str]) -> List[float]:
+def _extract_numbers_from_frames(frames_filenames: List[str]) -> List[float]:
     return [float(os.path.basename(frames_filename)[6:-4]) for frames_filename in frames_filenames]
+
 
 
 if __name__ == "__main__":
@@ -428,7 +511,6 @@ if __name__ == "__main__":
     video_decompose(video_path, repo_path)
     video_interpolate_frames(repo_path, [82, 84])
     #video_copy_frames(repo_path, 100, 101)
-    #video_copy_frames(repo_path, 100, 102)
     video_recompose(repo_path, output_video_path)
 
     
@@ -471,13 +553,13 @@ if __name__ == "__main__":
 
     """
     # Load frames using the new function
-    frame1 = load_frame("frame_17848.jpg")
-    frame2 = load_frame("frame_17850.jpg")
+    frame1 = _load_frame("frame_17848.jpg")
+    frame2 = _load_frame("frame_17850.jpg")
 
     frames = interpolate_frames(frame1, frame2, 2)
 
     # Save results
-    saved = save_frames(frames, filenames=["frame_17849-1.jpg", "frame_17849-2.jpg"])
+    saved = _save_frames(frames, filenames=["frame_17849-1.jpg", "frame_17849-2.jpg"])
     print(f"Saved interpolated frames: {saved}")
 
     """
