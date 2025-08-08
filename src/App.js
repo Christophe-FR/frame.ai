@@ -71,11 +71,11 @@ function UploadInterface() {
         // Navigate immediately when upload reaches 100%
         if (percentComplete >= 100) {
           console.log(`🚀 Upload reached 100% - navigating immediately`);
-          console.log(`📍 Target URL: /frames/${repoUuid || 'pending'}`);
+          console.log(`📍 Target URL: /${repoUuid || 'pending'}`);
           console.log(`⏱️ Navigation start time: ${new Date().toISOString()}`);
           
           // Navigate immediately without waiting for response
-          navigate(`/frames/${repoUuid || 'pending'}`);
+          navigate(`/${repoUuid || 'pending'}`);
         }
       }
     });
@@ -101,9 +101,9 @@ function UploadInterface() {
             
             // Navigate to the correct URL if we were on pending
             const currentPath = window.location.pathname;
-            if (currentPath.includes('/frames/pending')) {
-              console.log(`🔄 Navigating to correct URL: /frames/${response.uuid}`);
-              navigate(`/frames/${response.uuid}`);
+                  if (currentPath.includes('/pending')) {
+        console.log(`🔄 Navigating to correct URL: /${response.uuid}`);
+        navigate(`/${response.uuid}`);
             }
           }
           
@@ -296,10 +296,10 @@ function FrameDisplay() {
 
   const fetchTotalFrames = useCallback(async (uuid) => {
     try {
-      const response = await fetch(`http://localhost:8500/${uuid}/frames?start=0&end=0`);
+      const response = await fetch(`http://localhost:8500/ls/${uuid}/?start=0&end=0`);
       if (response.ok) {
         const data = await response.json();
-        setTotalFrames(data.total);
+        setTotalFrames(data.frames.total);
       }
     } catch (err) {
       console.error('Failed to get total frames count:', err);
@@ -308,7 +308,7 @@ function FrameDisplay() {
 
   const fetchVideoInfo = useCallback(async (uuid) => {
     try {
-      const response = await fetch(`http://localhost:8500/static/${uuid}/video_info.json`);
+              const response = await fetch(`http://localhost:8500/static/${uuid}/video_info.json`);
       if (response.ok) {
         const data = await response.json();
         setVideoInfo(data);
@@ -359,7 +359,7 @@ function FrameDisplay() {
       const end = start + framesPerPage - 1;
       
       console.log(`📄 Fetching frames from ${start} to ${end}...`);
-      const response = await fetch(`http://localhost:8500/${uuid}/frames?start=${start}&end=${end}`);
+      const response = await fetch(`http://localhost:8500/ls/${uuid}/?start=${start}&end=${end}`);
       
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -368,21 +368,25 @@ function FrameDisplay() {
       const data = await response.json();
       console.log(`📊 Response data:`, data);
       
-      const loadTime = ((Date.now() - startTime) / 1000).toFixed(2);
-      console.log(`✅ Loaded ${data.frames.length} frames in ${loadTime}s`);
+      // Use the raw frame paths directly (skip video_info.json and audio.wav)
+      const framePaths = data.filenames
+        .filter(filename => filename.includes('frame_') && filename.endsWith('.jpg'));
       
-      setFrames(data.frames);
-      setFrameNumbers(data.frame_numbers || []);
+      const loadTime = ((Date.now() - startTime) / 1000).toFixed(2);
+      console.log(`✅ Loaded ${framePaths.length} frames in ${loadTime}s`);
+      
+      setFrames(framePaths);
+      setFrameNumbers(data.frames.numbers);
       setLoading(false);
       setLastUpdate(new Date());
       
-      // Set baseline frame count and names
-      setLastKnownFrameCount(data.total);
-      setLastKnownFrameNames(data.frames.join(','));
+      // Set baseline frame count and names  
+      setLastKnownFrameCount(data.frames.total);
+      setLastKnownFrameNames(JSON.stringify(data));
       
       // Update total frame count from the response
-      console.log(`📊 Total frames from backend: ${data.total}`);
-      setTotalFrames(data.total);
+      console.log(`📊 Total frames from backend: ${data.frames.total}`);
+      setTotalFrames(data.frames.total);
     } catch (error) {
       console.error(`❌ Error loading frames: ${error}`);
       setError('Failed to load frames: ' + error.message);
@@ -394,77 +398,43 @@ function FrameDisplay() {
     if (!uuid) return false;
     
     try {
-      console.log(`🔍 Checking for changes using directory modification time...`);
-      const response = await fetch(`http://localhost:8500/${uuid}/dir_mod_time`);
+      console.log(`🔍 Checking for changes by comparing API response...`);
+      
+      // Calculate current page frame range
+      const start = (currentPage - 1) * framesPerPage;
+      const end = start + framesPerPage - 1;
+      
+      const response = await fetch(`http://localhost:8500/ls/${uuid}/?start=${start}&end=${end}`);
       if (response.ok) {
         const data = await response.json();
         
-        console.log(`📅 Current dir mod time: ${new Date(data.dir_mod_time).toISOString()}`);
-        console.log(`📅 Last dir mod time: ${lastDirModTime ? new Date(lastDirModTime).toISOString() : 'None'}`);
-        console.log(`📅 Raw values - Current: ${data.dir_mod_time}, Last: ${lastDirModTime}`);
+        // Simple comparison: stringify the entire response
+        const currentResponse = JSON.stringify(data);
         
-        // Remove tolerance to catch all changes - even small ones
-        const tolerance = 0; // No tolerance - catch any change
+        console.log(`📊 Response size: ${currentResponse.length} chars`);
         
-        if (lastDirModTime && (data.dir_mod_time - lastDirModTime) > tolerance) {
-          console.log(`🔄 Changes detected! Directory mod time: ${new Date(data.dir_mod_time).toISOString()}`);
-          console.log(`🔄 Previous mod time: ${new Date(lastDirModTime).toISOString()}`);
-          console.log(`🔄 Time difference: ${(data.dir_mod_time - lastDirModTime) / 1000}s`);
-          setLastDirModTime(data.dir_mod_time); // Update the baseline
+        if (lastKnownFrameNames && lastKnownFrameNames !== currentResponse) {
+          console.log(`🔄 API response changed!`);
+          setLastKnownFrameNames(currentResponse);
           return true;
-        } else if (!lastDirModTime) {
-          console.log(`📅 First load - setting baseline directory modification time`);
-          setLastDirModTime(data.dir_mod_time);
+        } else if (!lastKnownFrameNames) {
+          console.log(`📅 First load - setting baseline response`);
+          setLastKnownFrameNames(currentResponse);
         } else {
-          console.log(`✅ No changes detected (difference: ${(data.dir_mod_time - lastDirModTime) / 1000}s)`);
+          console.log(`✅ No changes detected - response identical`);
         }
       }
-      
-      // Also check if frame count has changed as a backup detection method
-      console.log(`🔍 Checking frame count as backup detection...`);
-      const framesResponse = await fetch(`http://localhost:8500/${uuid}/frames?start=0&end=0`);
-      if (framesResponse.ok) {
-        const framesData = await framesResponse.json();
-        console.log(`📊 Current total frames: ${framesData.total}, Previous: ${totalFrames}`);
-        
-        if (framesData.total !== lastKnownFrameCount) {
-          console.log(`🔄 Frame count changed! ${lastKnownFrameCount} -> ${framesData.total}`);
-          setLastKnownFrameCount(framesData.total);
-          return true;
-        }
-        
-        // Also check if the current page frames have changed
-        if (frames.length > 0) {
-          const currentPageResponse = await fetch(`http://localhost:8500/${uuid}/frames?start=${(currentPage - 1) * framesPerPage}&end=${(currentPage - 1) * framesPerPage + framesPerPage - 1}`);
-          if (currentPageResponse.ok) {
-            const currentPageData = await currentPageResponse.json();
-            console.log(`🔍 Checking current page frames...`);
-            console.log(`🔍 Current frames: ${frames.length}, New frames: ${currentPageData.frames.length}`);
-            
-            // Check if frame names have changed
-            const currentFrameNames = frames.join(',');
-            const newFrameNames = currentPageData.frames.join(',');
-            
-            if (currentFrameNames !== lastKnownFrameNames) {
-              console.log(`🔄 Frame names changed on current page!`);
-              console.log(`🔍 Old: ${lastKnownFrameNames}`);
-              console.log(`🔍 New: ${newFrameNames}`);
-              setLastKnownFrameNames(newFrameNames);
-              return true;
-            }
-          }
-        }
-      }
+
     } catch (error) {
       console.error(`❌ Error checking for changes: ${error}`);
     }
     return false;
-  }, [lastDirModTime, lastKnownFrameCount, lastKnownFrameNames, currentPage, framesPerPage]);
+  }, [lastKnownFrameNames, currentPage, framesPerPage]);
 
   // Add a global function to reset baseline (for debugging)
   useEffect(() => {
     window.resetBaseline = () => {
-      setLastDirModTime(null);
+      setLastKnownFrameNames(null);
       console.log('🔄 Baseline reset - next check will set new baseline');
     };
   }, []);
@@ -810,7 +780,7 @@ function FrameDisplay() {
                   style={{ cursor: 'pointer' }}
                 >
                 <img 
-                  src={`http://localhost:8500/static/${repoUuid}/${framePath}`}
+                  src={`http://localhost:8500/${framePath}`}
                     alt={`Frame ${frameNumber}`}
                   className="frame-image"
                   loading="lazy"
@@ -881,7 +851,6 @@ function App() {
   return (
     <Routes>
       <Route path="/" element={<UploadInterface />} />
-      <Route path="/frames/:repoUuid" element={<FrameDisplay />} />
       <Route path="/:repoUuid" element={<FrameDisplay />} />
     </Routes>
   );

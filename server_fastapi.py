@@ -5,7 +5,7 @@ import time
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from utils import video_decompose, _video_get_frames_filenames, get_file_modification_time, _extract_numbers_from_frames, video_create_repo
+from utils import video_get_frames_list, video_decompose, _video_get_frames_filenames, get_file_modification_time, _extract_numbers_from_frames, video_create_repo
 import cv2
 import numpy as np
 from io import BytesIO
@@ -31,7 +31,7 @@ STATIC_FOLDER = "static"
 ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff'}
 
 # Mount static files for direct image access
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=STATIC_FOLDER), name="static")
 
 @app.post("/video_upload")
 async def upload_video(file: UploadFile = File(...)):
@@ -125,65 +125,61 @@ async def upload_video(file: UploadFile = File(...)):
         print(f"❌ Error in upload_video after {total_time:.2f}s: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-
-@app.get("/{repo_uuid}/frames") # example: http://localhost:8000/2afaa5d5-b243-41d7-a7a8-efa21083d290/frames?start=5&end=10
-async def api__video_get_frames_filenames(repo_uuid: str, start: int = 0, end: int = None):
+@app.get("/ls/{repo_uuid}/")
+async def ls(repo_uuid: str, start: int = 0, end: int = None):
     try:
         repo_path = os.path.join(STATIC_FOLDER, repo_uuid)
         
+        # Check if repository directory exists
         if not os.path.exists(repo_path):
             raise HTTPException(status_code=404, detail="Repository not found")
         
-        frame_paths = _video_get_frames_filenames(repo_path)
+        # Define potential file paths
+        video_info_filename = os.path.join(repo_path, "video_info.json")
+        audio_filename = os.path.join(repo_path, "audio.wav")
         
-        # First extract the relevant indices
+        # Get frame information (this function should handle missing frames gracefully)
+        try:
+            frame_numbers, frame_filenames = video_get_frames_list(repo_path, include_filenames=True)
+        except Exception as e:
+            print(f"⚠️ Error getting frames for {repo_uuid}: {e}")
+            # If frames can't be listed, assume no frames yet
+            frame_numbers, frame_filenames = [], []
+        
+        total_frames = len(frame_numbers)
+        
+        # Apply pagination to frames
         if end is None:
-            relevant_paths = frame_paths[start:]
+            frame_numbers = frame_numbers[start:]
+            frame_filenames = frame_filenames[start:]
         else:
-            relevant_paths = frame_paths[start:end + 1]
+            frame_numbers = frame_numbers[start:end + 1]
+            frame_filenames = frame_filenames[start:end + 1]
         
-        # Then convert the relevant paths to just filenames for frontend
-        frames = [os.path.basename(frame_path) for frame_path in relevant_paths]
-
-        frame_numbers = _extract_numbers_from_frames(relevant_paths)
-
-        return {"frames": frames, "frame_numbers": frame_numbers, "count":len(relevant_paths), "total":len(frame_paths)}
-    
+        # Build list of files that actually exist
+        existing_files = []
+        if os.path.exists(video_info_filename):
+            existing_files.append(video_info_filename)
+        if os.path.exists(audio_filename):
+            existing_files.append(audio_filename)
+        
+        # Add existing frame files
+        existing_files.extend(frame_filenames)
+        
+        # Get modification times only for files that exist
+        modification_times = get_file_modification_time(existing_files)
+        
+        return {
+            "filenames": existing_files, 
+            "modification_times": modification_times, 
+            "frames": {"numbers": frame_numbers, "total": total_frames}
+        }
+        
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions
     except Exception as e:
-        print(f"Error in frames endpoint: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/{repo_uuid}/dir_mod_time")
-async def get_directory_modification_time(repo_uuid: str):
-    """Get the directory modification time to detect file changes."""
-    try:
-        repo_path = os.path.join(STATIC_FOLDER, repo_uuid)
-        
-        if not os.path.exists(repo_path):
-            raise HTTPException(status_code=404, detail="Repository not found")
-        
-        dir_mod_time = os.path.getmtime(repo_path)
-        
-        # Debug: Get current file count and list some files
-        import glob
-        frame_pattern = os.path.join(repo_path, "frame_*.jpg")
-        frames = glob.glob(frame_pattern)
-        
-        print(f"🔍 Dir mod time check for {repo_uuid}:")
-        print(f"   📁 Directory: {repo_path}")
-        print(f"   ⏰ Mod time: {dir_mod_time} ({dir_mod_time})")
-        print(f"   📊 Frame count: {len(frames)}")
-        if len(frames) > 0:
-            print(f"   📄 Sample files: {[os.path.basename(f) for f in frames[:3]]}")
-        
-        return {"dir_mod_time": dir_mod_time}
-    
-    except Exception as e:
-        print(f"Error in dir_mod_time endpoint: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
+        print(f"❌ Error in ls endpoint for {repo_uuid}: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 
@@ -227,18 +223,6 @@ async def get_processing_status(repo_uuid: str):
     
     return status_data
 
-@app.post("/get_upload_path")
-async def get_upload_path():
-    """Get a file path for direct upload."""
-    # Generate a new repository using utils function
-    repo_uuid, repo_path = video_create_repo()
-    
-    # Return the path where the frontend should write the file
-    return {
-        "uuid": repo_uuid,
-        "upload_path": repo_path,
-        "video_path": os.path.join(repo_path, "input_video.mp4")
-    }
 
 if __name__ == "__main__":
     os.makedirs(FRAMES_FOLDER, exist_ok=True)
@@ -248,4 +232,4 @@ if __name__ == "__main__":
     print(f"📁 Static folder: {os.path.abspath(STATIC_FOLDER)}")
     
     import uvicorn
-    uvicorn.run("server_fastapi:app", host="0.0.0.0", port=8500, reload=False)
+    uvicorn.run("server_fastapi:app", host="0.0.0.0", port=8500, reload=True)
