@@ -39,6 +39,8 @@ Thumbs.db
 /tfhub_cache/
 /frames/
 /static/
+/pids/
+/logs/
 **.bak
 
 # Image files

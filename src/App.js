@@ -68,14 +68,10 @@ function UploadInterface() {
         setUploadProgress(percentComplete);
         setUploadSpeed(`${speed} MB/s`);
         
-        // Navigate immediately when upload reaches 100%
+        // Just log progress, don't navigate yet - wait for server response
         if (percentComplete >= 100) {
-          console.log(`🚀 Upload reached 100% - navigating immediately`);
-          console.log(`📍 Target URL: /${repoUuid || 'pending'}`);
-          console.log(`⏱️ Navigation start time: ${new Date().toISOString()}`);
-          
-          // Navigate immediately without waiting for response
-          navigate(`/${repoUuid || 'pending'}`);
+          console.log(`🚀 Upload reached 100% - waiting for server response...`);
+          setUploadStatus('Upload complete! Processing...');
         }
       }
     });
@@ -94,18 +90,10 @@ function UploadInterface() {
           console.log(`🎯 Parsed response:`, response);
           console.log(`🎯 Backend assigned UUID: ${response.uuid}`);
           
-          // Update UUID if we navigated with 'pending'
-          if (repoUuid === 'pending' || !repoUuid) {
-            console.log(`🔄 Updating UUID from 'pending' to: ${response.uuid}`);
-            setRepoUuid(response.uuid);
-            
-            // Navigate to the correct URL if we were on pending
-            const currentPath = window.location.pathname;
-                  if (currentPath.includes('/pending')) {
-        console.log(`🔄 Navigating to correct URL: /${response.uuid}`);
-        navigate(`/${response.uuid}`);
-            }
-          }
+          // Navigate directly to frames view with the UUID from server
+          console.log(`🔄 Navigating to frames view: /${response.uuid}`);
+          setRepoUuid(response.uuid);
+          navigate(`/${response.uuid}`);
           
           setUploadStatus('Upload successful! Navigating to frames page...');
           setIsUploading(false);
