@@ -820,4 +820,108 @@ body {
   .upload-icon {
     font-size: 3rem;
   }
+}
+
+/* Task Status Banner */
+.task-status-banner {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: rgba(0, 123, 255, 0.95); /* Default blue */
+  color: white;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 8px 32px rgba(0, 123, 255, 0.3);
+  backdrop-filter: blur(10px);
+  z-index: 1000;
+  max-width: 400px;
+  min-width: 300px;
+  animation: slideInDown 0.3s ease-out;
+  transition: all 0.3s ease;
+}
+
+/* Task status specific colors */
+.task-status-banner.task-submitting {
+  background: rgba(0, 123, 255, 0.95); /* Blue for submitting */
+  box-shadow: 0 8px 32px rgba(0, 123, 255, 0.3);
+  color: white;
+}
+
+.task-status-banner.task-running,
+.task-status-banner.task-processing {
+  background: rgba(255, 193, 7, 0.95); /* Yellow for running */
+  box-shadow: 0 8px 32px rgba(255, 193, 7, 0.3);
+  color: #333;
+}
+
+.task-status-banner.task-completed {
+  background: rgba(40, 167, 69, 0.95); /* Green for completed */
+  box-shadow: 0 8px 32px rgba(40, 167, 69, 0.3);
+  color: white;
+}
+
+.task-status-banner.task-failed {
+  background: rgba(220, 53, 69, 0.95); /* Red for failed */
+  box-shadow: 0 8px 32px rgba(220, 53, 69, 0.3);
+  color: white;
+}
+
+@keyframes slideInDown {
+  from {
+    transform: translateY(-100px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.task-status-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.task-status-close {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: currentColor;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.2s;
+}
+
+.task-status-close:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.task-running .task-status-close,
+.task-processing .task-status-close {
+  background: rgba(0, 0, 0, 0.1);
+  color: #333;
+}
+
+.task-running .task-status-close:hover,
+.task-processing .task-status-close:hover {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.task-status-content p {
+  margin: 4px 0;
+  font-size: 0.9rem;
+}
+
+.task-status-note {
+  font-style: italic;
+  opacity: 0.8;
+  font-size: 0.8rem !important;
 } 

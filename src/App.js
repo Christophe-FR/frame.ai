@@ -260,6 +260,9 @@ function FrameDisplay() {
   const [lastKnownFrameCount, setLastKnownFrameCount] = useState(0);
   const [lastKnownFrameNames, setLastKnownFrameNames] = useState('');
   const [videoInfo, setVideoInfo] = useState(null);
+    const [runningTasks, setRunningTasks] = useState([]); // Changed to array for multiple tasks
+  const [forceRefreshCounter, setForceRefreshCounter] = useState(0); // Force refresh trigger
+  const [cacheBuster, setCacheBuster] = useState(Date.now()); // Cache buster for images
   
   const framesPerPage = 20;
 
@@ -375,10 +378,12 @@ function FrameDisplay() {
       const loadTime = ((Date.now() - startTime) / 1000).toFixed(2);
       console.log(`✅ Loaded ${framePaths.length} frames in ${loadTime}s`);
       
+      console.log(`📊 Setting frames state: ${framePaths.length} frames`);
       setFrames(framePaths);
       setFrameNumbers(data.frames.numbers);
       setLoading(false);
       setLastUpdate(new Date());
+      console.log(`✅ Frame state updated successfully`);
       
       // Set baseline frame count and names  
       setLastKnownFrameCount(data.frames.total);
@@ -456,6 +461,60 @@ function FrameDisplay() {
     }
   }, [currentPage, goToPage]);
 
+  // Function to poll individual task status
+  const pollTaskStatus = useCallback(async (taskId, repoUuid) => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const response = await fetch(`http://localhost:8500/api/tasks/${taskId}/status`);
+        if (response.ok) {
+          const statusData = await response.json();
+          
+          setRunningTasks(prev => prev.map(task => {
+            if (task.id === taskId) {
+              if (statusData.status === 'completed') {
+                console.log(`✅ Task ${taskId} completed successfully!`);
+                
+                // Trigger page refresh since new frames were created
+                console.log('🔄 Triggering page refresh due to completed interpolation');
+                setForceRefreshCounter(prev => prev + 1);
+                setCacheBuster(Date.now());
+                loadFrames(repoUuid);
+                fetchTotalFrames(repoUuid);
+                
+                // Mark as completed and schedule removal
+                setTimeout(() => {
+                  setRunningTasks(prevTasks => prevTasks.filter(t => t.id !== taskId));
+                }, 15000); // Remove after 15 seconds
+                
+                clearInterval(pollInterval);
+                return { ...task, status: 'completed', result: statusData.result };
+                
+              } else if (statusData.status === 'failed') {
+                console.error(`❌ Task ${taskId} failed:`, statusData.error);
+                clearInterval(pollInterval);
+                
+                // Remove failed task after 5 seconds
+                setTimeout(() => {
+                  setRunningTasks(prevTasks => prevTasks.filter(t => t.id !== taskId));
+                }, 5000);
+                
+                return { ...task, status: 'failed', error: statusData.error };
+              } else if (statusData.status === 'processing') {
+                return { ...task, status: 'processing', progress: statusData.progress };
+              }
+            }
+            return task;
+          }));
+        }
+      } catch (error) {
+        console.error(`Error polling task ${taskId}:`, error);
+      }
+    }, 2000); // Poll every 2 seconds
+
+    // Cleanup after 5 minutes
+    setTimeout(() => clearInterval(pollInterval), 300000);
+  }, [loadFrames, fetchTotalFrames]);
+
   // Load video info immediately when component mounts
   useEffect(() => {
     if (repoUuid && repoUuid !== 'pending') {
@@ -464,10 +523,11 @@ function FrameDisplay() {
     }
   }, [repoUuid, fetchVideoInfo]);
 
-  // Load frames when page changes
+  // Load frames when page changes or force refresh triggered
   useEffect(() => {
     console.log(`🎬 useEffect triggered with repoUuid: ${repoUuid}`);
     console.log(`🎬 Current page: ${currentPage}`);
+    console.log(`🎬 Force refresh counter: ${forceRefreshCounter}`);
     console.log(`🎬 Is processing: ${isProcessing}`);
     
     if (repoUuid && repoUuid !== 'pending') {
@@ -478,7 +538,7 @@ function FrameDisplay() {
     } else {
       console.log(`❌ No repoUuid available for frame loading`);
     }
-  }, [repoUuid, currentPage, loadFrames]);
+  }, [repoUuid, currentPage, forceRefreshCounter, loadFrames]);
 
   // Check processing status periodically
   useEffect(() => {
@@ -515,6 +575,8 @@ function FrameDisplay() {
         if (hasChanges) {
           console.log(`🔄 Changes detected! Triggering refresh...`);
           console.log(`🔄 Updating lastUpdate timestamp...`);
+          setForceRefreshCounter(prev => prev + 1);
+          setCacheBuster(Date.now());
           setLastUpdate(new Date());
           // Check processing status and total frame count
           checkProcessingStatus(repoUuid);
@@ -560,9 +622,13 @@ function FrameDisplay() {
           </button>
           <button 
             onClick={() => {
+              console.log('🔄 Manual refresh button clicked');
+              setForceRefreshCounter(prev => prev + 1);
+              setCacheBuster(Date.now());
+              setLastUpdate(new Date());
               loadFrames(repoUuid);
-              // Also fetch the latest frame count
               fetchTotalFrames(repoUuid);
+              fetchVideoInfo(repoUuid);
             }} 
             className="refresh-button"
             disabled={loading}
@@ -680,6 +746,59 @@ function FrameDisplay() {
             )}
           </div>
 
+          {/* Running Tasks Status - Stack multiple tasks */}
+          {runningTasks.map((task, index) => {
+            const getTaskIcon = (status) => {
+              switch(status) {
+                case 'submitting': return '⏳';
+                case 'running': case 'processing': return '🔄';
+                case 'completed': return '✅';
+                case 'failed': return '❌';
+                default: return '🔄';
+              }
+            };
+            
+            const getTaskMessage = (status) => {
+              switch(status) {
+                case 'submitting': return 'Starting interpolation...';
+                case 'running': return 'Processing frames...';
+                case 'processing': return 'Interpolating frames...';
+                case 'completed': return 'Interpolation completed!';
+                case 'failed': return 'Interpolation failed!';
+                default: return 'Processing...';
+              }
+            };
+            
+            return (
+              <div 
+                key={task.id} 
+                className={`task-status-banner task-${task.status}`}
+                style={{ top: `${20 + index * 120}px` }}
+              >
+                <div className="task-status-header">
+                  <span>{getTaskIcon(task.status)} {getTaskMessage(task.status)}</span>
+                  <button 
+                    onClick={() => setRunningTasks(prev => prev.filter(t => t.id !== task.id))}
+                    className="task-status-close"
+                    title="Dismiss (task continues in background)"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="task-status-content">
+                  <p><strong>Frames ({task.frames.length}):</strong> {task.frames.join(', ')}</p>
+                  <p><strong>Task ID:</strong> {task.id.substring(0, 8)}...</p>
+                  {task.progress && (
+                    <p><strong>Progress:</strong> {task.progress.current || 0}/{task.progress.total || 1}</p>
+                  )}
+                  {task.status === 'completed' && (
+                    <p className="task-status-note">✨ Auto-dismiss in 15s</p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+
           {/* Selected Frames Banner - Bottom Right Corner */}
           {selectedFrameNumbers.length > 0 && (
             <div className={`selected-frames-banner ${bannerCollapsed ? 'collapsed' : ''}`}>
@@ -753,21 +872,85 @@ function FrameDisplay() {
               )}
               <div className="banner-run-section">
                 <button 
-                  onClick={() => {
-                    console.log('Run button clicked with frames:', selectedFrameNumbers);
-                    // TODO: Implement run functionality
-                    alert(`Processing ${selectedFrameNumbers.length} selected frames: ${selectedFrameNumbers.join(', ')}`);
+                  onClick={async () => {
+                    console.log('🚀 Run button clicked with frames:', selectedFrameNumbers);
+                    
+                    if (selectedFrameNumbers.length === 0) {
+                      alert('Please select frames to process');
+                      return;
+                    }
+                    
+                    // Allow multiple tasks to run concurrently
+                    
+                    const taskId = `temp-${Date.now()}`;
+                    
+                    try {
+                      // Add task to queue with submitting status
+                      setRunningTasks(prev => [...prev, { 
+                        id: taskId,
+                        status: 'submitting', 
+                        frames: [...selectedFrameNumbers],
+                        startTime: Date.now()
+                      }]);
+                      
+                      // Clear selections immediately
+                      setSelectedFrames(new Set());
+                      
+                      // Submit interpolation job to backend
+                      const response = await fetch(`http://localhost:8500/api/interpolate/${repoUuid}`, {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                          target_frames: selectedFrameNumbers
+                        })
+                      });
+                      
+                      if (response.ok) {
+                        const result = await response.json();
+                        console.log('✅ Interpolation job submitted:', result);
+                        
+                        // Update task with real ID and running status
+                        setRunningTasks(prev => prev.map(task => 
+                          task.id === taskId 
+                            ? { ...task, id: result.task_id, status: 'running' }
+                            : task
+                        ));
+                        
+                        // Start polling for this specific task
+                        pollTaskStatus(result.task_id, repoUuid);
+                        
+                        console.log(`✅ Task ${result.task_id} started for ${selectedFrameNumbers.length} frames`);
+                        
+                      } else {
+                        const error = await response.text();
+                        console.error('❌ Interpolation failed:', error);
+                        alert(`❌ Failed to start interpolation: ${error}`);
+                        
+                        // Remove failed task
+                        setRunningTasks(prev => prev.filter(task => task.id !== taskId));
+                      }
+                      
+                    } catch (error) {
+                      console.error('❌ Network error:', error);
+                      alert(`❌ Network error: ${error.message}`);
+                      
+                      // Remove failed task
+                      setRunningTasks(prev => prev.filter(task => task.id !== taskId));
+                    }
                   }}
                   className="banner-run-btn"
-                  title="Run processing on selected frames"
+                  title="Run interpolation on selected frames"
+                  disabled={selectedFrameNumbers.length === 0}
                 >
-                  Run
+                  🚀 Run Interpolation
                 </button>
               </div>
             </div>
           )}
 
-          <div className="frames-grid">
+          <div className="frames-grid" key={`frames-${forceRefreshCounter}-${currentPage}`}>
             {frames.map((framePath, index) => {
               const frameNumber = frameNumbers[index] !== undefined ? frameNumbers[index] : (currentPage - 1) * framesPerPage + index + 1;
               const isSelected = selectedFrames.has(frameNumber);
@@ -780,7 +963,7 @@ function FrameDisplay() {
                   style={{ cursor: 'pointer' }}
                 >
                 <img 
-                  src={`http://localhost:8500/${framePath}`}
+                  src={`http://localhost:8500/${framePath}?cb=${cacheBuster}&fc=${forceRefreshCounter}`}
                     alt={`Frame ${frameNumber}`}
                   className="frame-image"
                   loading="lazy"

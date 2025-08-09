@@ -5,6 +5,7 @@ import time
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from utils import video_get_frames_list, video_decompose, _video_get_frames_filenames, get_file_modification_time, _extract_numbers_from_frames, video_create_repo
 import cv2
 import numpy as np
@@ -12,6 +13,18 @@ from io import BytesIO
 from fastapi.responses import Response
 import base64
 import asyncio
+from typing import List
+from pydantic import BaseModel
+
+# Celery imports
+try:
+    from video_interpolation_server import interpolate_video_frames
+    from celery.result import AsyncResult
+    from video_interpolation_server import app as celery_app
+    CELERY_AVAILABLE = True
+except ImportError:
+    CELERY_AVAILABLE = False
+    print("⚠️ Celery not available - interpolation endpoints disabled")
 
 app = FastAPI(title="Frames Viewer")
 
@@ -30,8 +43,29 @@ FRAMES_FOLDER = "frames"
 STATIC_FOLDER = "static"
 ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff'}
 
-# Mount static files for direct image access
-app.mount("/static", StaticFiles(directory=STATIC_FOLDER), name="static")
+# Custom static file handler with cache-busting headers
+@app.get("/static/{file_path:path}")
+async def serve_static_file(file_path: str):
+    """Serve static files with no-cache headers to prevent browser caching of updated frames"""
+    import os
+    full_path = os.path.join(STATIC_FOLDER, file_path)
+    
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    # Return file with cache-busting headers
+    response = FileResponse(
+        path=full_path,
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache", 
+            "Expires": "0"
+        }
+    )
+    return response
+
+# Keep the mount for other static files (fallback)
+# app.mount("/static", StaticFiles(directory=STATIC_FOLDER), name="static")
 
 @app.post("/video_upload")
 async def upload_video(file: UploadFile = File(...)):
@@ -183,9 +217,68 @@ async def ls(repo_uuid: str, start: int = 0, end: int = None):
 
 
 
+# Pydantic models for interpolation
+class InterpolateRequest(BaseModel):
+    target_frames: List[float]
+
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+# =============================================================================
+# CELERY INTERPOLATION ENDPOINTS 
+# =============================================================================
+
+@app.post("/api/interpolate/{repo_uuid}")
+async def start_interpolation(repo_uuid: str, request: InterpolateRequest):
+    """Submit video interpolation task for a repository"""
+    if not CELERY_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Celery service not available")
+    
+    try:
+        # Build repo path
+        repo_path = os.path.join(STATIC_FOLDER, repo_uuid)
+        
+        # Check if repo exists
+        if not os.path.exists(repo_path):
+            raise HTTPException(status_code=404, detail="Repository not found")
+        
+        # Submit to Celery
+        task = interpolate_video_frames.delay(repo_path, request.target_frames)
+        
+        return {
+            "status": "accepted", 
+            "task_id": task.id,
+            "repo_uuid": repo_uuid,
+            "target_frames": request.target_frames,
+            "message": f"Interpolation started for {len(request.target_frames)} frames"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start interpolation: {str(e)}")
+
+@app.get("/api/tasks/{task_id}/status")
+async def get_task_status(task_id: str):
+    """Get status of interpolation task"""
+    if not CELERY_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Celery service not available")
+    
+    try:
+        task = AsyncResult(task_id, app=celery_app)
+        
+        if task.state == 'PENDING':
+            return {"status": "pending", "message": "Task queued"}
+        elif task.state == 'PROGRESS':
+            return {"status": "processing", "progress": task.info}
+        elif task.state == 'SUCCESS':
+            return {"status": "completed", "result": task.result}
+        elif task.state == 'FAILURE':
+            return {"status": "failed", "error": str(task.info)}
+        else:
+            return {"status": task.state}
+            
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Task not found: {str(e)}")
 
 @app.get("/{repo_uuid}/status")
 async def get_processing_status(repo_uuid: str):
