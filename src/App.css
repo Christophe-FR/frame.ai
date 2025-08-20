@@ -315,6 +315,30 @@ body {
   cursor: not-allowed;
 }
 
+.download-button {
+  display: inline-block;
+  padding: 6px 12px;
+  background: #28a745;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: background 0.2s;
+  margin-top: 10px;
+  margin-left: 10px;
+}
+
+.download-button:hover:not(:disabled) {
+  background: #218838;
+}
+
+.download-button:disabled {
+  background: #6c757d;
+  cursor: not-allowed;
+}
+
 .loading {
   text-align: center;
   padding: 40px;
@@ -392,6 +416,28 @@ body {
   to {
     transform: translateY(0);
     opacity: 1;
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideOutRight {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
   }
 }
 

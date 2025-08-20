@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>XMLHttpRequest CORS Test</title>
+</head>
+<body>
+    <h1>XMLHttpRequest CORS Test</h1>
+    <button onclick="testXHR()">Test XMLHttpRequest Upload</button>
+    <div id="result"></div>
+
+    <script>
+        function testXHR() {
+            const formData = new FormData();
+            const file = new File(['test content'], 'test.txt', { type: 'text/plain' });
+            formData.append('file', file);
+
+            const xhr = new XMLHttpRequest();
+            
+            xhr.addEventListener('load', function() {
+                console.log('Response status:', xhr.status);
+                console.log('Response headers:', xhr.getAllResponseHeaders());
+                console.log('Response text:', xhr.responseText);
+                
+                if (xhr.status === 200) {
+                    try {
+                        const response = JSON.parse(xhr.responseText);
+                        document.getElementById('result').innerHTML = '<pre style="color: green;">Success: ' + JSON.stringify(response, null, 2) + '</pre>';
+                    } catch (e) {
+                        document.getElementById('result').innerHTML = '<pre style="color: orange;">Response: ' + xhr.responseText + '</pre>';
+                    }
+                } else {
+                    document.getElementById('result').innerHTML = '<pre style="color: red;">Error: Status ' + xhr.status + ' - ' + xhr.responseText + '</pre>';
+                }
+            });
+            
+            xhr.addEventListener('error', function() {
+                console.error('XHR Error:', xhr.status, xhr.responseText);
+                document.getElementById('result').innerHTML = '<pre style="color: red;">Network Error</pre>';
+            });
+            
+            xhr.open('POST', 'http://localhost:8500/video_upload');
+            xhr.send(formData);
+        }
+    </script>
+</body>
+</html>

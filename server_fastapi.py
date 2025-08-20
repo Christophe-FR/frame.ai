@@ -2,7 +2,7 @@ import os
 import uuid
 import glob
 import time
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 # Celery imports
 try:
-    from video_interpolation_server import interpolate_video_frames
+    from video_interpolation_server import task_video_interpolate_frames, task_video_decompose, task_video_recompose
     from celery.result import AsyncResult
     from video_interpolation_server import app as celery_app
     CELERY_AVAILABLE = True
@@ -28,16 +28,59 @@ except ImportError:
 
 app = FastAPI(title="Frames Viewer")
 
-# CORS for React frontend
+# CORS for React frontend - More comprehensive configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3500"],
+    allow_origins=[
+        "http://localhost:3500",
+        "http://127.0.0.1:3500", 
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+    ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],
+    allow_headers=[
+        "Accept",
+        "Accept-Language", 
+        "Content-Language",
+        "Content-Type",
+        "Authorization",
+        "X-Requested-With",
+        "Origin",
+        "Access-Control-Request-Method",
+        "Access-Control-Request-Headers"
+    ],
     expose_headers=["*"],
     max_age=600,
 )
+
+# Debug middleware to log all requests
+@app.middleware("http")
+async def debug_requests(request: Request, call_next):
+    print(f"🔍 DEBUG: {request.method} {request.url}")
+    print(f"🔍 DEBUG: Origin: {request.headers.get('origin', 'NOT_FOUND')}")
+    print(f"🔍 DEBUG: User-Agent: {request.headers.get('user-agent', 'NOT_FOUND')}")
+    print(f"🔍 DEBUG: All headers: {dict(request.headers)}")
+    
+    try:
+        response = await call_next(request)
+        print(f"🔍 DEBUG: Response status: {response.status_code}")
+        print(f"🔍 DEBUG: Response headers: {dict(response.headers)}")
+        return response
+    except Exception as e:
+        print(f"🔍 DEBUG: Exception caught in middleware: {e}")
+        # Ensure CORS headers are added even for exceptions
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)},
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:3500",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, HEAD",
+                "Access-Control-Allow-Headers": "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
+            }
+        )
 
 FRAMES_FOLDER = "frames"
 STATIC_FOLDER = "static"
@@ -68,10 +111,15 @@ async def serve_static_file(file_path: str):
 # app.mount("/static", StaticFiles(directory=STATIC_FOLDER), name="static")
 
 @app.post("/video_upload")
-async def upload_video(file: UploadFile = File(...)):
+async def upload_video(request: Request, file: UploadFile = File(...)):
     request_start = time.time()
     print(f"🚀 Upload request received at {time.strftime('%H:%M:%S')}")
     print(f"📁 File details: name={file.filename}, size={file.size if file.size else 'unknown'}")
+    
+    # Debug CORS headers
+    print(f"🔍 Request headers: {dict(request.headers)}")
+    print(f"🔍 Origin header: {request.headers.get('origin', 'NOT_FOUND')}")
+    print(f"🔍 User-Agent: {request.headers.get('user-agent', 'NOT_FOUND')}")
     
     try:
         # Generate a new repository using utils function
@@ -106,7 +154,10 @@ async def upload_video(file: UploadFile = File(...)):
         print(f"📄 Response data: {response_data}")
         
         # Start file writing and processing in background
+        task_id = None
+        
         def write_and_process():
+            nonlocal task_id
             try:
                 print(f"💾 Starting background file write for {repo_uuid}...")
                 write_start = time.time()
@@ -122,14 +173,26 @@ async def upload_video(file: UploadFile = File(...)):
                 print(f"   ⏱️  Write time: {write_time:.1f}s")
                 print(f"   🚀 Write speed: {file_size_mb / write_time:.1f} MB/s")
                 
-                # Start video decomposition
+                # Start video decomposition using Celery task
                 print(f"🎬 Starting video decomposition for {repo_uuid}...")
                 process_start = time.time()
                 
                 # Check if file exists and has content
                 if os.path.exists(video_path) and os.path.getsize(video_path) > 0:
                     print(f"📁 Video file verified: {os.path.getsize(video_path) / 1024 / 1024:.1f} MB")
-                    video_decompose(video_path, repo_path)
+                    
+                    if CELERY_AVAILABLE:
+                        # Use Celery task for decomposition
+                        print(f"🔄 Submitting decomposition task to Celery...")
+                        task = task_video_decompose.delay(video_path, repo_path)
+                        task_id = task.id
+                        print(f"✅ Decomposition task submitted: {task_id}")
+                    else:
+                        # Fallback to direct function call
+                        print(f"⚠️ Celery not available, using direct decomposition...")
+                        video_decompose(video_path, repo_path)
+                        print(f"✅ Direct decomposition completed")
+                    
                     process_time = time.time() - process_start
                     print(f"✅ Video decomposition completed for {repo_uuid} in {process_time:.1f}s")
                 else:
@@ -145,6 +208,13 @@ async def upload_video(file: UploadFile = File(...)):
         
         print(f"🔄 Background processing started for {repo_uuid}")
         
+        # Wait a moment for task_id to be set if using Celery
+        if CELERY_AVAILABLE:
+            time.sleep(0.1)  # Small delay to allow task submission
+            if task_id:
+                response_data["task_id"] = task_id
+                print(f"📄 Updated response data with task_id: {task_id}")
+        
         # Calculate total request time
         total_time = time.time() - request_start
         response_time = time.time() - response_start
@@ -157,7 +227,18 @@ async def upload_video(file: UploadFile = File(...)):
     except Exception as e:
         total_time = time.time() - request_start
         print(f"❌ Error in upload_video after {total_time:.2f}s: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Return a proper response with CORS headers instead of raising an exception
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)},
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:3500",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, HEAD",
+                "Access-Control-Allow-Headers": "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
+            }
+        )
 
 @app.get("/ls/{repo_uuid}/")
 async def ls(repo_uuid: str, start: int = 0, end: int = None):
@@ -221,9 +302,29 @@ async def ls(repo_uuid: str, start: int = 0, end: int = None):
 class InterpolateRequest(BaseModel):
     target_frames: List[float]
 
+class RecomposeRequest(BaseModel):
+    output_filename: str = "processed_video.mp4"
+
 @app.get("/api/health")
 async def health():
+    print("🔍 DEBUG: Health check endpoint called")
     return {"status": "ok"}
+
+@app.get("/api/test-cors")
+async def test_cors(request: Request):
+    print(f"🔍 DEBUG: Test CORS endpoint called")
+    print(f"🔍 DEBUG: Origin: {request.headers.get('origin', 'NOT_FOUND')}")
+    return {"message": "CORS test endpoint", "origin": request.headers.get('origin', 'NOT_FOUND')}
+
+@app.post("/api/test-upload")
+async def test_upload(request: Request):
+    print(f"🔍 DEBUG: Test upload endpoint called")
+    print(f"🔍 DEBUG: Method: {request.method}")
+    print(f"🔍 DEBUG: URL: {request.url}")
+    print(f"🔍 DEBUG: Origin: {request.headers.get('origin', 'NOT_FOUND')}")
+    print(f"🔍 DEBUG: Content-Type: {request.headers.get('content-type', 'NOT_FOUND')}")
+    print(f"🔍 DEBUG: All headers: {dict(request.headers)}")
+    return {"message": "Test upload endpoint", "received": True}
 
 # =============================================================================
 # CELERY INTERPOLATION ENDPOINTS 
@@ -244,7 +345,7 @@ async def start_interpolation(repo_uuid: str, request: InterpolateRequest):
             raise HTTPException(status_code=404, detail="Repository not found")
         
         # Submit to Celery
-        task = interpolate_video_frames.delay(repo_path, request.target_frames)
+        task = task_video_interpolate_frames.delay(repo_path, request.target_frames)
         
         return {
             "status": "accepted", 
@@ -256,6 +357,37 @@ async def start_interpolation(repo_uuid: str, request: InterpolateRequest):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start interpolation: {str(e)}")
+
+@app.post("/api/recompose/{repo_uuid}")
+async def start_recomposition(repo_uuid: str, request: RecomposeRequest):
+    """Submit video recomposition task for a repository"""
+    if not CELERY_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Celery service not available")
+    
+    try:
+        # Build repo path
+        repo_path = os.path.join(STATIC_FOLDER, repo_uuid)
+        
+        # Check if repo exists
+        if not os.path.exists(repo_path):
+            raise HTTPException(status_code=404, detail="Repository not found")
+        
+        # Build output video path
+        output_video_path = os.path.join(repo_path, request.output_filename)
+        
+        # Submit to Celery
+        task = task_video_recompose.delay(repo_path, output_video_path)
+        
+        return {
+            "status": "accepted", 
+            "task_id": task.id,
+            "repo_uuid": repo_uuid,
+            "output_filename": request.output_filename,
+            "message": f"Video recomposition started"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start recomposition: {str(e)}")
 
 @app.get("/api/tasks/{task_id}/status")
 async def get_task_status(task_id: str):

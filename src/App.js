@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, Routes, Route } from 'react-router-dom';
 import './App.css';
 
-function UploadInterface() {
+function UploadInterface({ onUploadComplete }) {
   const [selectedFile, setSelectedFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -94,6 +94,11 @@ function UploadInterface() {
           console.log(`🔄 Navigating to frames view: /${response.uuid}`);
           setRepoUuid(response.uuid);
           navigate(`/${response.uuid}`);
+          
+          // Call the upload complete callback with response data
+          if (onUploadComplete) {
+            onUploadComplete(response);
+          }
           
           setUploadStatus('Upload successful! Navigating to frames page...');
           setIsUploading(false);
@@ -226,7 +231,7 @@ function formatFileSize(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-function FrameDisplay() {
+function FrameDisplay({ setDecompositionTask, setPollDecompositionStatus, decompositionTask: parentDecompositionTask, setRecompositionTask, setPollRecompositionStatus, recompositionTask: parentRecompositionTask, isDownloading, setIsDownloading, downloadedVideos, setDownloadedVideos, pollingTasks, setPollingTasks }) {
   const { repoUuid } = useParams();
   const navigate = useNavigate();
   
@@ -248,7 +253,7 @@ function FrameDisplay() {
   const [lastKnownFrameCount, setLastKnownFrameCount] = useState(0);
   const [lastKnownFrameNames, setLastKnownFrameNames] = useState('');
   const [videoInfo, setVideoInfo] = useState(null);
-    const [runningTasks, setRunningTasks] = useState([]); // Changed to array for multiple tasks
+  const [runningTasks, setRunningTasks] = useState([]); // Changed to array for multiple tasks
   const [forceRefreshCounter, setForceRefreshCounter] = useState(0); // Force refresh trigger
   const [cacheBuster, setCacheBuster] = useState(Date.now()); // Cache buster for images
   
@@ -309,6 +314,8 @@ function FrameDisplay() {
     }
   }, []);
 
+
+
   const checkProcessingStatus = useCallback(async (uuid) => {
     if (!uuid) return;
     
@@ -324,15 +331,22 @@ function FrameDisplay() {
         setIsProcessing(false);
         setProcessingStatus('Processing complete!');
       } else {
-        console.log(`⏳ Still processing... (${data.frame_count} frames, metadata: ${data.has_metadata})`);
-        setProcessingStatus(`Processing video... (${data.frame_count} frames available)`);
-        setIsProcessing(true);
+        // Check if we have a decomposition task running
+        if (parentDecompositionTask && parentDecompositionTask.status === 'processing') {
+          console.log(`⏳ Decomposition in progress... (${data.frame_count} frames, metadata: ${data.has_metadata})`);
+          setProcessingStatus(`Decomposing video... (${data.frame_count} frames available)`);
+          setIsProcessing(true);
+        } else {
+          console.log(`⏳ Still processing... (${data.frame_count} frames, metadata: ${data.has_metadata})`);
+          setProcessingStatus(`Processing video... (${data.frame_count} frames available)`);
+          setIsProcessing(true);
+        }
       }
     } catch (error) {
       console.error(`❌ Error checking processing status: ${error}`);
       setProcessingStatus('Error checking status');
     }
-  }, []);
+  }, [parentDecompositionTask]);
 
   const loadFrames = useCallback(async (uuid) => {
     if (!uuid) {
@@ -503,6 +517,222 @@ function FrameDisplay() {
     setTimeout(() => clearInterval(pollInterval), 300000);
   }, [loadFrames, fetchTotalFrames]);
 
+  // Function to poll decomposition task status
+  const pollDecompositionStatus = useCallback(async (taskId, repoUuid) => {
+    console.log(`🔍 Starting to poll decomposition task: ${taskId}`);
+    const pollInterval = setInterval(async () => {
+      try {
+        console.log(`🔍 Polling decomposition task: ${taskId}`);
+        const response = await fetch(`http://localhost:8500/api/tasks/${taskId}/status`);
+        if (response.ok) {
+          const statusData = await response.json();
+          console.log(`🔍 Decomposition task status: ${JSON.stringify(statusData)}`);
+          
+          setDecompositionTask(prev => {
+            console.log(`🔍 Updating decomposition task state. Current: ${JSON.stringify(prev)}, New status: ${statusData.status}`);
+            if (prev && prev.id === taskId) {
+              if (statusData.status === 'completed') {
+                console.log(`✅ Decomposition task ${taskId} completed successfully!`);
+                
+                // Trigger page refresh since frames were extracted
+                console.log('🔄 Triggering page refresh due to completed decomposition');
+                setForceRefreshCounter(prev => prev + 1);
+                setCacheBuster(Date.now());
+                loadFrames(repoUuid);
+                fetchTotalFrames(repoUuid);
+                checkProcessingStatus(repoUuid);
+                
+                // Mark as completed and schedule removal
+                setTimeout(() => {
+                  setDecompositionTask(null);
+                }, 15000); // Remove after 15 seconds
+                
+                clearInterval(pollInterval);
+                return { ...prev, status: 'completed', result: statusData.result };
+                
+              } else if (statusData.status === 'failed') {
+                console.error(`❌ Decomposition task ${taskId} failed:`, statusData.error);
+                clearInterval(pollInterval);
+                
+                // Remove failed task after 5 seconds
+                setTimeout(() => {
+                  setDecompositionTask(null);
+                }, 5000);
+                
+                return { ...prev, status: 'failed', error: statusData.error };
+              } else if (statusData.status === 'processing') {
+                return { ...prev, status: 'processing', progress: statusData.progress };
+              }
+            }
+            return prev;
+          });
+        }
+      } catch (error) {
+        console.error(`Error polling decomposition task ${taskId}:`, error);
+      }
+    }, 2000); // Poll every 2 seconds
+
+    // Cleanup after 5 minutes
+    setTimeout(() => clearInterval(pollInterval), 300000);
+  }, [loadFrames, fetchTotalFrames, checkProcessingStatus, setDecompositionTask]);
+
+  // Function to poll recomposition task status
+  const pollRecompositionStatus = useCallback(async (taskId, repoUuid) => {
+    console.log(`🔍 Starting to poll recomposition task: ${taskId}`);
+    
+    const pollInterval = setInterval(async () => {
+      try {
+        const response = await fetch(`http://localhost:8500/api/tasks/${taskId}/status`);
+        if (response.ok) {
+          const statusData = await response.json();
+          
+          if (statusData.status === 'completed') {
+            console.log(`✅ Recomposition task ${taskId} completed!`);
+            
+            // Download the video
+            downloadCompletedVideo(repoUuid, statusData.result.output_video_path);
+            
+            // Stop polling and update task
+            clearInterval(pollInterval);
+            setRecompositionTask(prev => ({
+              ...prev,
+              status: 'completed',
+              result: statusData.result
+            }));
+            
+            // Remove task after 15 seconds
+            setTimeout(() => setRecompositionTask(null), 15000);
+            
+          } else if (statusData.status === 'failed') {
+            console.error(`❌ Recomposition task ${taskId} failed`);
+            clearInterval(pollInterval);
+            setRecompositionTask(prev => ({
+              ...prev,
+              status: 'failed',
+              error: statusData.error
+            }));
+            setTimeout(() => setRecompositionTask(null), 5000);
+          }
+        }
+      } catch (error) {
+        console.error(`Error polling task ${taskId}:`, error);
+      }
+    }, 2000);
+
+    // Stop polling after 5 minutes
+    setTimeout(() => clearInterval(pollInterval), 300000);
+  }, []);
+
+  // Pass the polling function back to parent
+  useEffect(() => {
+    if (setPollDecompositionStatus) {
+      setPollDecompositionStatus(() => pollDecompositionStatus);
+    }
+  }, [pollDecompositionStatus, setPollDecompositionStatus]);
+
+  // Pass the recomposition polling function back to parent
+  useEffect(() => {
+    if (setPollRecompositionStatus) {
+      setPollRecompositionStatus(() => pollRecompositionStatus);
+    }
+  }, [pollRecompositionStatus, setPollRecompositionStatus]);
+
+  const downloadVideo = useCallback(async (uuid) => {
+    try {
+      console.log(`📥 Starting video download for ${uuid}`);
+      
+      // Set recomposition task state
+      setRecompositionTask({
+        id: `temp-${Date.now()}`,
+        status: 'submitting',
+        startTime: Date.now()
+      });
+      
+      // Start video recomposition
+      const response = await fetch(`http://localhost:8500/api/recompose/${uuid}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          output_filename: `processed_video_${uuid}.mp4`
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('✅ Video recomposition started:', result);
+        
+        // Update task with real ID and start polling
+        setRecompositionTask(prev => ({
+          ...prev,
+          id: result.task_id,
+          status: 'processing'
+        }));
+        
+        // Start polling for recomposition completion
+        if (pollRecompositionStatus) {
+          pollRecompositionStatus(result.task_id, uuid);
+        }
+        
+      } else {
+        const error = await response.text();
+        console.error('❌ Failed to start video recomposition:', error);
+        alert(`Failed to start video download: ${error}`);
+        setRecompositionTask(null);
+      }
+    } catch (error) {
+      console.error('❌ Error downloading video:', error);
+      alert(`Error downloading video: ${error.message}`);
+      setRecompositionTask(null);
+    }
+  }, [pollRecompositionStatus]);
+
+    const downloadCompletedVideo = useCallback(async (uuid, videoPath) => {
+    console.log(`📥 Opening video in new tab: ${videoPath}`);
+    
+    // Open video in new tab
+    const videoUrl = `http://localhost:8500/${videoPath}`;
+    window.open(videoUrl, '_blank');
+    
+    console.log('✅ Video opened in new tab');
+  }, []);
+
+  // Start polling for decomposition task if it exists and polling function is available
+  useEffect(() => {
+    if (parentDecompositionTask && parentDecompositionTask.status === 'processing' && pollDecompositionStatus) {
+      console.log(`🔄 Starting polling for existing decomposition task: ${parentDecompositionTask.id}`);
+      pollDecompositionStatus(parentDecompositionTask.id, repoUuid);
+    }
+  }, [parentDecompositionTask, pollDecompositionStatus, repoUuid]);
+
+  // Check if decomposition task is already completed when component loads
+  useEffect(() => {
+    if (parentDecompositionTask && parentDecompositionTask.status === 'processing' && repoUuid) {
+      console.log(`🔍 Checking if decomposition task is already completed: ${parentDecompositionTask.id}`);
+      fetch(`http://localhost:8500/api/tasks/${parentDecompositionTask.id}/status`)
+        .then(response => response.json())
+        .then(statusData => {
+          console.log(`🔍 Initial task status check: ${JSON.stringify(statusData)}`);
+          if (statusData.status === 'completed') {
+            console.log(`✅ Decomposition task was already completed!`);
+            setDecompositionTask(prev => ({
+              ...prev,
+              status: 'completed',
+              result: statusData.result
+            }));
+            // Auto-dismiss after 15 seconds
+            setTimeout(() => {
+              setDecompositionTask(null);
+            }, 15000);
+          }
+        })
+        .catch(error => {
+          console.error(`❌ Error checking initial task status: ${error}`);
+        });
+    }
+  }, [parentDecompositionTask, repoUuid]);
+
   // Load video info immediately when component mounts
   useEffect(() => {
     if (repoUuid && repoUuid !== 'pending') {
@@ -622,6 +852,17 @@ function FrameDisplay() {
             disabled={loading}
           >
             {loading ? 'Refreshing...' : '🔄 Refresh'}
+          </button>
+          <button 
+            onClick={() => {
+              console.log('📥 Download video button clicked');
+              downloadVideo(repoUuid);
+            }} 
+            className="download-button"
+            disabled={loading || isProcessing}
+            title="Download the processed video"
+          >
+            📥 Download Video
           </button>
         </div>
       </header>
@@ -786,6 +1027,82 @@ function FrameDisplay() {
               </div>
             );
           })}
+
+                    {/* Decomposition Task Status */}
+          {parentDecompositionTask && (
+            <div 
+              className={`task-status-banner task-${parentDecompositionTask.status}`}
+              style={{ top: `${20 + runningTasks.length * 120}px` }}
+            >
+              <div className="task-status-header">
+                <span>
+                  {parentDecompositionTask.status === 'submitting' && '⏳'}
+                  {parentDecompositionTask.status === 'processing' && '🎬'}
+                  {parentDecompositionTask.status === 'completed' && '✅'}
+                  {parentDecompositionTask.status === 'failed' && '❌'}
+                  {' '}
+                  {parentDecompositionTask.status === 'submitting' && 'Starting decomposition...'}
+                  {parentDecompositionTask.status === 'processing' && 'Decomposing video...'}
+                  {parentDecompositionTask.status === 'completed' && 'Decomposition completed!'}
+                  {parentDecompositionTask.status === 'failed' && 'Decomposition failed!'}
+                </span>
+                <button 
+                  onClick={() => setDecompositionTask(null)}
+                  className="task-status-close"
+                  title="Dismiss (task continues in background)"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="task-status-content">
+                <p><strong>Task ID:</strong> {parentDecompositionTask.id.substring(0, 8)}...</p>
+                {parentDecompositionTask.progress && (
+                  <p><strong>Progress:</strong> {parentDecompositionTask.progress.current || 0}/{parentDecompositionTask.progress.total || 100}%</p>
+                )}
+                {parentDecompositionTask.status === 'completed' && (
+                  <p className="task-status-note">✨ Auto-dismiss in 15s</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Recomposition Task Status */}
+          {parentRecompositionTask && (
+            <div 
+              className={`task-status-banner task-${parentRecompositionTask.status}`}
+              style={{ top: `${20 + runningTasks.length * 120 + (parentDecompositionTask ? 120 : 0)}px` }}
+            >
+              <div className="task-status-header">
+                <span>
+                  {parentRecompositionTask.status === 'submitting' && '⏳'}
+                  {parentRecompositionTask.status === 'processing' && '🎬'}
+                  {parentRecompositionTask.status === 'completed' && '✅'}
+                  {parentRecompositionTask.status === 'failed' && '❌'}
+                  {' '}
+                  {parentRecompositionTask.status === 'submitting' && 'Starting video recomposition...'}
+                  {parentRecompositionTask.status === 'processing' && 'Recomposing video...'}
+                  {parentRecompositionTask.status === 'completed' && 'Video recomposition completed!'}
+                  {parentRecompositionTask.status === 'failed' && 'Video recomposition failed!'}
+                </span>
+                <button 
+                  onClick={() => setRecompositionTask(null)}
+                  className="task-status-close"
+                  title="Dismiss (task continues in background)"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="task-status-content">
+                <p><strong>Task ID:</strong> {parentRecompositionTask.id.substring(0, 8)}...</p>
+                {parentRecompositionTask.progress && (
+                  <p><strong>Progress:</strong> {parentRecompositionTask.progress.current || 0}/{parentRecompositionTask.progress.total || 100}%</p>
+                )}
+                {parentRecompositionTask.status === 'completed' && (
+                  <p className="task-status-note">✨ Auto-dismiss in 15s</p>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Selected Frames Banner - Bottom Right Corner */}
           {selectedFrameNumbers.length > 0 && (
@@ -1019,10 +1336,37 @@ function FrameDisplay() {
 }
 
 function App() {
+  const [decompositionTask, setDecompositionTask] = useState(null);
+  const [recompositionTask, setRecompositionTask] = useState(null);
+  const [pollDecompositionStatus, setPollDecompositionStatus] = useState(null);
+  const [pollRecompositionStatus, setPollRecompositionStatus] = useState(null);
+  const [isDownloading, setIsDownloading] = useState(false); // Prevent duplicate downloads
+  const [downloadedVideos, setDownloadedVideos] = useState(new Set()); // Track downloaded videos
+  const [pollingTasks, setPollingTasks] = useState(new Set()); // Track which tasks are being polled
+
+  const handleUploadComplete = useCallback((response) => {
+    // Start tracking decomposition task if backend uses Celery
+    if (response.task_id) {
+      console.log(`🎬 Decomposition task started: ${response.task_id}`);
+      setDecompositionTask({
+        id: response.task_id,
+        status: 'processing',
+        startTime: Date.now()
+      });
+      // Start polling for decomposition task status
+      if (pollDecompositionStatus) {
+        pollDecompositionStatus(response.task_id, response.uuid);
+      } else {
+        // If polling function is not available yet, store the task info for later
+        console.log(`⏳ Polling function not available yet, will start polling when FrameDisplay loads`);
+      }
+    }
+  }, [pollDecompositionStatus]);
+
   return (
     <Routes>
-      <Route path="/" element={<UploadInterface />} />
-      <Route path="/:repoUuid" element={<FrameDisplay />} />
+      <Route path="/" element={<UploadInterface onUploadComplete={handleUploadComplete} />} />
+      <Route path="/:repoUuid" element={<FrameDisplay setDecompositionTask={setDecompositionTask} setPollDecompositionStatus={setPollDecompositionStatus} decompositionTask={decompositionTask} setRecompositionTask={setRecompositionTask} setPollRecompositionStatus={setPollRecompositionStatus} recompositionTask={recompositionTask} isDownloading={isDownloading} setIsDownloading={setIsDownloading} downloadedVideos={downloadedVideos} setDownloadedVideos={setDownloadedVideos} pollingTasks={pollingTasks} setPollingTasks={setPollingTasks} />} />
     </Routes>
   );
 }
